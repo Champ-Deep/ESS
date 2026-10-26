@@ -15,8 +15,15 @@ describe('topPositionReference', () => {
 		}
 	});
 
+	it('reads the people who hold the positions as the positions', () => {
+		expect(topPositionReference('Subhakar Rao')).toBe('chief');
+		expect(topPositionReference(' SUBHAKAR RAO ')).toBe('chief');
+		expect(topPositionReference('Hema Malini')).toBe('mam');
+		expect(topPositionReference('Hemamalini')).toBe('mam');
+	});
+
 	it('does not mistake people or other titles for Chief or Mam', () => {
-		for (const raw of [null, '', 'Chief Operating Officer', 'Deepak Guduru', 'Chiefly Rao', 'CEO', 'Mamatha', 'Madam Curie']) {
+		for (const raw of [null, '', 'Chief Operating Officer', 'Deepak Guduru', 'Chiefly Rao', 'CEO', 'Mamatha', 'Madam Curie', 'Hema', 'Subhakar Reddy']) {
 			expect(isTopReference(raw)).toBe(false);
 		}
 	});

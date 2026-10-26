@@ -13,6 +13,7 @@ import {
 import { requireUser } from '$lib/server/rbac';
 import { logActivity } from '$lib/server/db/mongo';
 import { clerk, clerkAuthActive, mirrorPasswordToClerk, needsCurrentPassword } from '$lib/server/clerk';
+import { isNoLoginEmail } from '$lib/no-login';
 
 async function checkCurrentPassword(dbUser: typeof users.$inferSelect, currentPassword: string) {
 	// Under Clerk the person may have reset their password through Clerk's own
@@ -42,6 +43,11 @@ export const POST: RequestHandler = async (event) => {
 	const [dbUser] = await db.select().from(users).where(eq(users.id, actor.id)).limit(1);
 	if (!dbUser) {
 		throw error(401, 'Authentication required');
+	}
+	// A blue-collar worker has no login to put a password on, and someone who
+	// has their portal open must not be able to give them one.
+	if (isNoLoginEmail(dbUser.email) || event.locals.actingFor) {
+		throw error(400, 'This account has no login, so it has no password');
 	}
 
 	// A first password chosen after signing in through Clerk needs no current

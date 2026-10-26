@@ -22,6 +22,7 @@ import { startLoginEmailSender } from '$lib/server/login-emails';
 import { startClerkAccountSync } from '$lib/server/clerk-sync';
 import type { SessionUser } from '$lib/server/auth';
 import { clerkAuthActive, authorizedParties, userForClerkId } from '$lib/server/clerk';
+import { actingTarget } from '$lib/server/act-as';
 
 // Kicks off the ProHance attendance poller with the server process. No-op
 // unless PROHANCE_BASE_URL + Prohance_API_KEY are set; guarded internally
@@ -129,6 +130,25 @@ const essUserFromClerk: Handle = async ({ event, resolve }) => {
 };
 
 /**
+ * "Open their portal" (src/lib/server/act-as.ts): while someone has a
+ * blue-collar worker's portal open, the request runs as that worker, and
+ * `locals.actingFor` remembers who is really there. Runs after either sign-in
+ * has found the real person, and re-checks their right to do it every time.
+ */
+const actAs: Handle = async ({ event, resolve }) => {
+	event.locals.actingFor = null;
+	const real = event.locals.user;
+	if (real) {
+		const target = await actingTarget(event.cookies, real).catch(() => null);
+		if (target) {
+			event.locals.actingFor = { id: real.id, fullName: real.fullName };
+			event.locals.user = await withCapabilities(target);
+		}
+	}
+	return resolve(event);
+};
+
+/**
  * Portal pages need a signed-in person. The (app) layout redirects too, but
  * SvelteKit runs page loads alongside it, so a page reading locals.user.id
  * would crash with a 500 before that redirect landed.
@@ -138,13 +158,13 @@ const signedInOnly: Handle = ({ event, resolve }) => {
 	return resolve(event);
 };
 
-const legacyGuarded = sequence(legacyHandle, signedInOnly);
+const legacyGuarded = sequence(legacyHandle, actAs, signedInOnly);
 let clerkHandle: Handle | null = null;
 
 // Which sign-in runs is decided per request, so flipping AUTH_PROVIDER (or
 // rolling back) is a Railway variable change plus restart, not a rebuild.
 export const handle: Handle = (input) => {
 	if (!clerkAuthActive()) return legacyGuarded(input);
-	clerkHandle ??= sequence(withClerkHandler({ authorizedParties: authorizedParties() }), essUserFromClerk, signedInOnly);
+	clerkHandle ??= sequence(withClerkHandler({ authorizedParties: authorizedParties() }), essUserFromClerk, actAs, signedInOnly);
 	return clerkHandle(input);
 };

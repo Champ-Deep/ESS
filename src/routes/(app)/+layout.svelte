@@ -7,6 +7,7 @@
 	import { chat } from '$lib/chat/client.svelte';
 	import { hub } from '$lib/hub/client.svelte';
 	import { cardSpotlight } from '$lib/ui/spotlight';
+	import HardHat from '@lucide/svelte/icons/hard-hat';
 
 	let { data, children } = $props();
 
@@ -29,6 +30,14 @@
 		count: (started ? chat.badge : data.chatBadge.count) + hub.counts.work,
 		urgent: (started ? chat.channels.some((c) => c.kind === 'announcements' && c.mentions > 0) : data.chatBadge.urgent) || hub.counts.urgent
 	});
+
+	// Leaving a blue-collar worker's portal: back to the Team page as yourself.
+	let leaving = $state(false);
+	async function leavePortal() {
+		leaving = true;
+		await fetch('/api/act-as', { method: 'DELETE' }).catch(() => {});
+		location.href = '/team';
+	}
 
 	// What the person is here as. A base role is an access setting, not a job
 	// title, so it is phrased as the kind of access rather than a rank.
@@ -72,7 +81,47 @@
 	</main>
 </div>
 
+{#if data.actingFor}
+	<!--
+		Someone has a blue-collar worker's portal open (src/lib/server/act-as.ts).
+		Pinned to the screen so it never scrolls out of sight.
+	-->
+	<div class="acting-bar" role="status">
+		<HardHat size={16} />
+		<span>
+			You're in <strong>{data.user.fullName}</strong>'s portal. They have no login, so whatever you do here is done as them.
+		</span>
+		<button type="button" class="ess-btn ess-btn--sm" onclick={leavePortal} disabled={leaving}>
+			{leaving ? 'Going back…' : `Back to ${data.actingFor.fullName}`}
+		</button>
+	</div>
+{/if}
+
 <!-- Leads: tasks waiting for approval pop up on whatever page they are on. -->
 <ApprovalPopup />
 <!-- Checked in: punch-out reminder at 9h, missed-punch prompt at 9h 30m. -->
 <ShiftReminder />
+
+<style>
+	.acting-bar {
+		position: fixed;
+		left: 50%;
+		bottom: 16px;
+		transform: translateX(-50%);
+		z-index: 60;
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		max-width: min(760px, calc(100vw - 32px));
+		padding: 10px 12px 10px 16px;
+		border-radius: 14px;
+		background: var(--ess-text);
+		color: var(--ess-surface, #fff);
+		font-size: 13.5px;
+		box-shadow: 0 10px 30px rgb(0 0 0 / 0.25);
+	}
+	.acting-bar span {
+		flex: 1;
+		min-width: 0;
+	}
+</style>

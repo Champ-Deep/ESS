@@ -22,11 +22,13 @@
 	import KeyRound from '@lucide/svelte/icons/key-round';
 	import CalendarDays from '@lucide/svelte/icons/calendar-days';
 	import Settings from '@lucide/svelte/icons/settings';
+	import HardHat from '@lucide/svelte/icons/hard-hat';
 	import PersonSettingsPanel from '$lib/components/PersonSettingsPanel.svelte';
 	import LoginEmailQueue from '$lib/components/LoginEmailQueue.svelte';
 	import { WEEKDAY_LABELS, DEFAULT_WEEKDAYS_OFF, weekdaysOffOn } from '$lib/week-off';
 	import { BASE_ROLE_LABEL } from '$lib/capabilities';
 	import { CHIEF_PICK, MAM_PICK, topFromPick, topLabel, topPick, topPositionReference } from '$lib/chief';
+	import { isNoLoginEmail } from '$lib/no-login';
 
 	import type { ActionData, PageData } from './$types';
 
@@ -121,6 +123,12 @@
 	let bulkImportFile = $state<File | null>(null);
 	let uploadingBulk = $state(false);
 	/** "Replace file" swaps out the import under review; "Upload another" adds one. */
+	// Add person: a blank email asks whether they are blue collar.
+	let newEmail = $state('');
+	// Unanswered until they pick, so the required radio makes them choose.
+	let newBlueCollar = $state<boolean | null>(null);
+	const askBlueCollar = $derived(!newEmail.trim());
+
 	let replacing = $state(false);
 	function openUpload(replace: boolean) {
 		replacing = replace;
@@ -142,6 +150,8 @@
 		status: 'ready' | 'needs_review' | 'created' | 'skipped_existing';
 		/** Parser findings for this row — a drifted column, or an unusable login id. */
 		repairNotes: string[] | null;
+		/** No work email, confirmed as a blue-collar worker (src/lib/no-login.ts). */
+		blueCollar: boolean;
 	};
 
 	let reviewImport = $state<{ id: string; filename: string; status: string; appliedAt: string | null } | null>(null);
@@ -237,8 +247,51 @@
 		return row.reportsToRowId ? null : topPositionReference(row.reportingAuthorityRaw);
 	}
 
+	/** No work email and still waiting for the blue-collar question. */
+	const awaitingBlueCollar = $derived(
+		reviewRows.filter((r) => r.status === 'needs_review' && isNoLoginEmail(r.officialEmail) && !r.blueCollar && !r.existingUserId)
+	);
+	let confirmingAll = $state(false);
+	/** Says yes for every waiting row that already has a manager; the rest stay listed. */
+	async function confirmAllBlueCollar() {
+		confirmingAll = true;
+		try {
+			for (const row of awaitingBlueCollar.filter((r) => r.reportsToRowId)) {
+				await patchRow(row.id, { blueCollar: true });
+			}
+		} finally {
+			confirmingAll = false;
+		}
+	}
+
 	function resolveDuplicate(rowId: string, decision: 'link' | 'create_new') {
 		patchRow(rowId, { duplicateDecision: decision });
+	}
+
+	// Opens a blue-collar worker's portal as them (src/lib/act-as.ts).
+	let openingPortal = $state<string | null>(null);
+	let portalError = $state('');
+	async function openPortal(userId: string) {
+		openingPortal = userId;
+		portalError = '';
+		const res = await fetch('/api/act-as', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ userId })
+		});
+		if (res.ok) {
+			location.href = '/dashboard';
+			return;
+		}
+		portalError = (await res.json().catch(() => null))?.message ?? 'Could not open their portal';
+		openingPortal = null;
+	}
+
+	/** "12 Mar 2024" from a 'YYYY-MM-DD' profile date. */
+	function shortDate(iso: string | null): string | null {
+		if (!iso) return null;
+		const d = new Date(`${iso}T00:00:00`);
+		return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 	}
 
 	function managerName(row: ReviewRow): string {
@@ -641,7 +694,15 @@ Delete it anyway? Those employees go back to Sat/Sun week offs until they are gi
 		</div>
 	{/if}
 
-	{#if form?.success}
+	{#if form?.success && form.blueCollar}
+		<div class="ess-notice ess-notice--success">
+			<span class="ess-notice__icon"><HardHat size={15} /></span>
+			<div class="ess-notice__body">
+				<strong>Added {form.fullName} as blue collar.</strong>
+				No login and no email. {form.managerName ?? 'Their manager'} (or an admin) opens their portal for them from the Team page.
+			</div>
+		</div>
+	{:else if form?.success}
 		<div class="ess-notice ess-notice--success">
 			<span class="ess-notice__icon"><UserPlus size={15} /></span>
 			<div class="ess-notice__body">
@@ -718,9 +779,9 @@ Delete it anyway? Those employees go back to Sat/Sun week offs until they are gi
 										<Avatar userId={person.id} fullName={person.fullName} hasPicture={person.hasPicture} size="md" />
 										<span class="name-text">
 											<strong>{person.fullName}</strong>
-											<small title={person.email}>
+											<small title={person.noLogin ? 'No work email, so no login' : person.email}>
 												{#if person.employeeCode}<span class="code-cell">{person.employeeCode}</span>{:else}<span class="missing" title="No employee code — biometric attendance can't be matched">No code</span>{/if}
-												<span class="ess-dot-sep"></span>{person.email}
+												<span class="ess-dot-sep"></span>{#if person.noLogin}<span class="no-login">Blue collar · no login</span>{:else}{person.email}{/if}
 											</small>
 										</span>
 									</span>
@@ -768,9 +829,11 @@ Delete it anyway? Those employees go back to Sat/Sun week offs until they are gi
 													<button type="button" class="ess-btn ess-btn--sm ess-btn--ghost" onclick={() => (confirmingDelete = null)} disabled={deletingId === person.id}>Cancel</button>
 												</span>
 											{:else}
-												<button type="button" class="ess-icon-btn" onclick={() => openReset(person)} aria-label="Reset password for {person.fullName}" title="Reset password for {person.fullName}">
-													<KeyRound size={16} />
-												</button>
+												{#if !person.noLogin}
+													<button type="button" class="ess-icon-btn" onclick={() => openReset(person)} aria-label="Reset password for {person.fullName}" title="Reset password for {person.fullName}">
+														<KeyRound size={16} />
+													</button>
+												{/if}
 												<button type="button" class="ess-icon-btn danger" onclick={() => (confirmingDelete = person.id)} aria-label="Delete {person.fullName}" title="Delete {person.fullName}">
 													<Trash2 size={16} />
 												</button>
@@ -826,9 +889,32 @@ Delete it anyway? Those employees go back to Sat/Sun week offs until they are gi
 						<input class="ess-input" name="fullName" required />
 					</label>
 					<label class="ess-field">
-						<span class="ess-label">Work email <span class="req">*</span></span>
-						<input class="ess-input" name="email" type="email" required />
+						<span class="ess-label">Work email</span>
+						<input class="ess-input" name="email" type="email" bind:value={newEmail} />
 					</label>
+					{#if askBlueCollar}
+						<!-- No work email: only a blue-collar worker, who gets no login (src/lib/no-login.ts). -->
+						<fieldset class="ess-field blue-collar-ask">
+							<legend class="ess-label">No work email. Are they blue collar? <span class="req">*</span></legend>
+							<label class="radio"><input type="radio" name="blueCollar" bind:group={newBlueCollar} value={true} required /> Yes, blue collar</label>
+							<label class="radio"><input type="radio" name="blueCollar" bind:group={newBlueCollar} value={false} /> No, I'll add their email</label>
+							<span class="ess-help">
+								{#if newBlueCollar}
+									They get no login. {data.teamLeadTeamId ? 'You' : 'The manager you pick below'} (or an admin) open their portal for them to apply leave, check attendance and keep their details.
+								{:else}
+									Everyone else needs a work email to sign in.
+								{/if}
+							</span>
+						</fieldset>
+						{#if newBlueCollar}
+							<label class="ess-field">
+								<span class="ess-label">Employee code</span>
+								<input class="ess-input" name="employeeCode" placeholder="e.g. INFRATECH0230" />
+								<span class="ess-help">Matches their biometric punches to attendance.</span>
+							</label>
+						{/if}
+					{/if}
+					{#if !(askBlueCollar && newBlueCollar)}
 					<label class="ess-field">
 						<span class="ess-label">Access role <span class="req">*</span></span>
 						<select class="ess-select" name="access" bind:value={newAccess}>
@@ -845,6 +931,7 @@ Delete it anyway? Those employees go back to Sat/Sun week offs until they are gi
 						</select>
 						<span class="ess-help">{accessHint}</span>
 					</label>
+					{/if}
 					{#if !data.teamLeadTeamId}
 						<label class="ess-field">
 							<span class="ess-label">Team</span>
@@ -856,13 +943,20 @@ Delete it anyway? Those employees go back to Sat/Sun week offs until they are gi
 							</select>
 						</label>
 						<label class="ess-field">
-							<span class="ess-label">Reports to</span>
-							<select class="ess-select" name="reportsTo">
+							<span class="ess-label">Reports to{#if askBlueCollar && newBlueCollar} <span class="req">*</span>{/if}</span>
+							<select class="ess-select" name="reportsTo" required={askBlueCollar && newBlueCollar}>
 								<option value="">— not set —</option>
-								{#if data.canPickChief}<option value={CHIEF_PICK}>Chief</option><option value={MAM_PICK}>Mam</option>{/if}
-								{#each data.allPeople as p (p.id)}
-									<option value={p.id}>{p.fullName}</option>
-								{/each}
+								{#if askBlueCollar && newBlueCollar}
+									<!-- Their manager opens their portal, so it has to be someone who can sign in. -->
+									{#each data.allPeople.filter((p) => !p.noLogin) as p (p.id)}
+										<option value={p.id}>{p.fullName}</option>
+									{/each}
+								{:else}
+									{#if data.canPickChief}<option value={CHIEF_PICK}>Chief</option><option value={MAM_PICK}>Mam</option>{/if}
+									{#each data.allPeople as p (p.id)}
+										<option value={p.id}>{p.fullName}</option>
+									{/each}
+								{/if}
 							</select>
 						</label>
 						<label class="ess-field">
@@ -931,7 +1025,7 @@ Delete it anyway? Those employees go back to Sat/Sun week offs until they are gi
 								<span class="ess-badge ess-badge--{BADGE[selected.status]}">{statusLabel[selected.status]}</span>
 							</div>
 							<p class="ess-caption">
-								{#if selected.employeeCode}{selected.employeeCode}<span class="ess-dot-sep"></span>{/if}{selected.email}
+								{#if selected.employeeCode}{selected.employeeCode}<span class="ess-dot-sep"></span>{/if}{#if selected.noLogin}Blue collar · no login{:else}{selected.email}{/if}
 							</p>
 						</div>
 						<button type="button" class="ess-icon-btn" onclick={() => (selectedId = null)} aria-label="Close"><X size={18} /></button>
@@ -970,6 +1064,42 @@ Delete it anyway? Those employees go back to Sat/Sun week offs until they are gi
 						<div><dt><Building2 size={16} /></dt><dd><span>Leave left</span><strong>{selected.leaveLeft} {selected.leaveLeft === 1 ? 'day' : 'days'}</strong></dd></div>
 					</dl>
 
+					{#if selected.details}
+						{@const d = selected.details}
+						<!--
+							No login, so nobody else keeps this for them: their reporting
+							manager (and HR) see it here.
+						-->
+						<div class="no-login-details">
+							<p class="ess-caption">Blue collar: no work email, no login. Their details, kept here for the people who look after them:</p>
+							<dl class="ess-kv">
+								{#if d.designation}<dt>Designation</dt><dd>{d.designation}</dd>{/if}
+								{#if d.department || d.teamAndFloor}<dt>Department</dt><dd>{d.department ?? d.teamAndFloor}</dd>{/if}
+								{#if d.dateOfJoining}<dt>Joined</dt><dd>{shortDate(d.dateOfJoining)}</dd>{/if}
+								{#if d.phone}<dt>Phone</dt><dd><a href="tel:{d.phone}">{d.phone}</a></dd>{/if}
+								{#if d.gender}<dt>Gender</dt><dd>{d.gender}</dd>{/if}
+								{#if d.dateOfBirth}<dt>Date of birth</dt><dd>{shortDate(d.dateOfBirth)}</dd>{/if}
+								{#if d.bloodGroup}<dt>Blood group</dt><dd>{d.bloodGroup}</dd>{/if}
+								{#if d.address}<dt>Address</dt><dd>{d.address}</dd>{/if}
+								{#if d.permanentAddress && d.permanentAddress !== d.address}<dt>Permanent address</dt><dd>{d.permanentAddress}</dd>{/if}
+								{#if d.emergencyContactName || d.emergencyContactPhone}
+									<dt>Emergency contact</dt>
+									<dd>
+										{[d.emergencyContactName, d.emergencyContactRelationship && `(${d.emergencyContactRelationship})`].filter(Boolean).join(' ')}
+										{#if d.emergencyContactPhone}<br /><a href="tel:{d.emergencyContactPhone}">{d.emergencyContactPhone}</a>{/if}
+									</dd>
+								{/if}
+							</dl>
+							{#if selected.canOpenPortal}
+								<button type="button" class="ess-btn ess-btn--primary wide" onclick={() => openPortal(selected!.id)} disabled={openingPortal === selected.id}>
+									<HardHat size={16} /> {openingPortal === selected.id ? 'Opening…' : `Open ${selected.fullName.split(' ')[0]}'s portal`}
+								</button>
+								<span class="ess-help">Apply leave, check attendance or update their details as them.</span>
+								{#if portalError}<span class="ess-help danger-text">{portalError}</span>{/if}
+							{/if}
+						</div>
+					{/if}
+
 					{#if selected.canEditSettings}
 						<button type="button" class="ess-btn ess-btn--outline wide" onclick={() => (editingPerson = selected)}>
 							<Settings size={16} /> Edit settings
@@ -1001,7 +1131,9 @@ Delete it anyway? Those employees go back to Sat/Sun week offs until they are gi
 
 					{#if data.canDeletePeople && selected.id !== data.currentUserId}
 						<div class="btn-row">
-							<button type="button" class="ess-btn ess-btn--secondary" onclick={() => openReset(selected!)}><KeyRound size={15} /> Reset password</button>
+							{#if !selected.noLogin}
+								<button type="button" class="ess-btn ess-btn--secondary" onclick={() => openReset(selected!)}><KeyRound size={15} /> Reset password</button>
+							{/if}
 							{#if confirmingDelete === selected.id}
 								<button type="button" class="ess-btn ess-btn--danger" onclick={() => deleteEmployee(selected!.id)} disabled={deletingId === selected.id}>
 									{deletingId === selected.id ? 'Deleting…' : 'Confirm delete'}
@@ -1448,8 +1580,20 @@ Delete it anyway? Those employees go back to Sat/Sun week offs until they are gi
 								<span class="ess-notice__icon">!</span>
 								<div class="ess-notice__body">
 									<strong>{needsReviewCount} row(s) need a decision before applying</strong>
-									A reporting-line manager couldn't be confidently matched, the name closely matches an existing account under a different email, or the sheet's email column doesn't hold a usable login id. Each row says which below.
+									A reporting-line manager couldn't be confidently matched, the name closely matches an existing account under a different email, the sheet's email column doesn't hold a usable login id, or there is no work email and someone has to say whether the person is blue collar. Each row says which below.
 								</div>
+							</div>
+						{/if}
+						{#if awaitingBlueCollar.length > 0 && !locked}
+							<div class="ess-notice">
+								<span class="ess-notice__icon"><HardHat size={14} /></span>
+								<div class="ess-notice__body">
+									<strong>{awaitingBlueCollar.length} {awaitingBlueCollar.length === 1 ? 'person has' : 'people have'} no work email. Are they blue collar?</strong>
+									Blue-collar workers get no login. Their reporting manager, or an admin, opens their portal for them. Each needs a manager who can sign in; pick one on the row, or type a work email instead.
+								</div>
+								<button type="button" class="ess-btn ess-btn--sm ess-btn--secondary" onclick={confirmAllBlueCollar} disabled={confirmingAll || !awaitingBlueCollar.some((r) => r.reportsToRowId)}>
+									{confirmingAll ? 'Confirming…' : `Yes, all ${awaitingBlueCollar.filter((r) => r.reportsToRowId).length} with a manager`}
+								</button>
 							</div>
 						{/if}
 
@@ -1472,7 +1616,10 @@ Delete it anyway? Those employees go back to Sat/Sun week offs until they are gi
 											<td class="code-cell">{row.employeeCode ?? '—'}</td>
 											<td>
 												{#if locked || row.status === 'skipped_existing'}
-													{row.officialEmail}
+													{#if isNoLoginEmail(row.officialEmail)}<span class="no-login">No login</span>{:else}{row.officialEmail}{/if}
+												{:else if isNoLoginEmail(row.officialEmail)}
+													<!-- No work email in the sheet: added without a login unless one is typed here. -->
+													<input class="ess-input" type="email" value="" placeholder="No login — add a work email to give one" onblur={(e) => onEmailBlur(row.id, e)} disabled={savingRowId === row.id} />
 												{:else}
 													<input class="ess-input" type="email" value={row.officialEmail} onblur={(e) => onEmailBlur(row.id, e)} disabled={savingRowId === row.id} />
 												{/if}
@@ -1529,6 +1676,26 @@ Delete it anyway? Those employees go back to Sat/Sun week offs until they are gi
 															{/if}
 														{/each}
 													</ul>
+												</td>
+											</tr>
+										{/if}
+										{#if !locked && isNoLoginEmail(row.officialEmail) && (row.status === 'needs_review' || row.status === 'ready') && !row.existingUser}
+											<tr class="notes-row">
+												<td colspan="6">
+													<div class="duplicate-banner">
+														{#if row.blueCollar}
+															<span><strong>Blue collar</strong>: no login. {managerName(row)} opens their portal for them.</span>
+															<button type="button" class="ess-btn ess-btn--sm ess-btn--ghost" onclick={() => patchRow(row.id, { blueCollar: false })} disabled={savingRowId === row.id}>Undo</button>
+														{:else}
+															<span>
+																No work email. Is "{row.fullName}" blue collar?
+																{#if !row.reportsToRowId}Pick their reporting manager first.{/if}
+															</span>
+															<div class="btn-row">
+																<button type="button" class="ess-btn ess-btn--sm ess-btn--secondary" onclick={() => patchRow(row.id, { blueCollar: true })} disabled={savingRowId === row.id || !row.reportsToRowId}>Yes, blue collar</button>
+															</div>
+														{/if}
+													</div>
 												</td>
 											</tr>
 										{/if}
@@ -2094,6 +2261,37 @@ Delete it anyway? Those employees go back to Sat/Sun week offs until they are gi
 		font-size: 18px;
 	}
 	/* Two columns of facts keep the panel short enough to sit beside the list. */
+	.no-login {
+		color: var(--ess-text-secondary);
+		font-style: italic;
+	}
+	.blue-collar-ask {
+		border: 0;
+		padding: 0;
+		margin: 0;
+		display: grid;
+		gap: 6px;
+	}
+	.blue-collar-ask .radio {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 14px;
+	}
+	.no-login-details {
+		display: grid;
+		gap: 10px;
+		padding: 14px;
+		border: 1px solid var(--ess-border-subtle);
+		border-radius: 12px;
+	}
+	.no-login-details .ess-kv {
+		font-size: 13px;
+		row-gap: 8px;
+	}
+	.no-login-details .ess-kv dd {
+		overflow-wrap: anywhere;
+	}
 	.facts {
 		display: grid;
 		grid-template-columns: repeat(2, minmax(0, 1fr));

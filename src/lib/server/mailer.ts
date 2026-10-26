@@ -1,4 +1,5 @@
 import { env } from '$env/dynamic/private';
+import { isNoLoginEmail } from '../no-login';
 
 /**
  * Transactional email via Resend's REST API (https://resend.com/docs).
@@ -64,6 +65,11 @@ export interface SendEmailInput {
 }
 
 export async function sendEmail(input: SendEmailInput): Promise<SendResult> {
+	// A placeholder for someone with no login (src/lib/no-login.ts) is not a
+	// mailbox; refused here so no caller can bounce mail off it.
+	if (isNoLoginEmail(input.to)) {
+		return { ok: false, error: 'This person has no login and no email address' };
+	}
 	const { apiKey, from } = config();
 	if (!apiKey) {
 		return { ok: false, error: 'RESEND_API_KEY is not set' };

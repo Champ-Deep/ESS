@@ -10,8 +10,10 @@
  * one. Their requests skip the manager stage and go straight to their concerned
  * HR for a single approval (src/lib/server/approval-chain.ts).
  *
- * The HR sheet writes them as plain text in the reporting-authority column,
- * sometimes misspelt, so the import recognises them here.
+ * The HR sheet writes them as plain text in the reporting-authority column —
+ * by title, sometimes misspelt, or by the name of the person who holds it
+ * (Subhakar Rao is Chief, Hema Malini is Mam) — so the import recognises them
+ * here.
  */
 
 export type TopPosition = 'chief' | 'mam';
@@ -48,6 +50,14 @@ export function asTopPosition(value: string | null | undefined): TopPosition {
 	return value === 'mam' ? 'mam' : 'chief';
 }
 
+/**
+ * The people who hold each position, as the HR sheet names them (normalised:
+ * lowercase, letters and single spaces). Neither has a login, so naming them
+ * in the reporting column means the position, not a person to look up.
+ */
+const CHIEF_NAMES = ['subhakar rao', 'subhakara rao'];
+const MAM_NAMES = ['hema malini', 'hemamalini'];
+
 /** Which top position a reporting-authority cell names, or null for a person. */
 export function topPositionReference(raw: string | null | undefined): TopPosition | null {
 	if (!raw) return null;
@@ -57,9 +67,9 @@ export function topPositionReference(raw: string | null | undefined): TopPositio
 		.replace(/\s+/g, ' ')
 		.trim()
 		.replace(/^the /, '');
-	if (s === 'chief' || s === 'cheif') return 'chief';
+	if (s === 'chief' || s === 'cheif' || CHIEF_NAMES.includes(s)) return 'chief';
 	// "Ma'am" loses its apostrophe above and arrives as "ma am".
-	if (s === 'mam' || s === 'maam' || s === 'ma am' || s === 'madam') return 'mam';
+	if (s === 'mam' || s === 'maam' || s === 'ma am' || s === 'madam' || MAM_NAMES.includes(s)) return 'mam';
 	return null;
 }
 
@@ -72,4 +82,16 @@ export function isTopReference(raw: string | null | undefined): boolean {
  * The lowercased, trimmed spellings above, for SQL that has to spot a top
  * position without running this module (team/+page.server.ts).
  */
-export const TOP_REFERENCE_SPELLINGS = ['chief', 'cheif', 'the chief', 'mam', 'maam', "ma'am", 'madam', 'the mam', "the ma'am"];
+export const TOP_REFERENCE_SPELLINGS = [
+	'chief',
+	'cheif',
+	'the chief',
+	'mam',
+	'maam',
+	"ma'am",
+	'madam',
+	'the mam',
+	"the ma'am",
+	...CHIEF_NAMES,
+	...MAM_NAMES
+];

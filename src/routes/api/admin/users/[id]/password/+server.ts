@@ -10,6 +10,7 @@ import { hiddenFrom } from '$lib/server/hidden-users';
 import { logActivity } from '$lib/server/db/mongo';
 import { mirrorPasswordToClerk } from '$lib/server/clerk';
 import { userCanReach } from '$lib/server/org-scope';
+import { isNoLoginEmail } from '$lib/no-login';
 
 // Admin-issued password reset for another user (no knowledge of their current password
 // required). Authorization mirrors canActOnUser: Super Admin/Admin may reset anyone,
@@ -35,6 +36,10 @@ export const PUT: RequestHandler = async (event) => {
 	const [target] = await db.select().from(users).where(eq(users.id, targetUserId)).limit(1);
 	if (!target || hiddenFrom(actor.id, target)) {
 		throw error(404, 'User not found');
+	}
+	// No login to reset (src/lib/no-login.ts): give them a real email first.
+	if (isNoLoginEmail(target.email)) {
+		throw error(400, `${target.fullName} has no login, so there is no password to reset`);
 	}
 
 	if (viaPrivilege) {

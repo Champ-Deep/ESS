@@ -1,5 +1,8 @@
 import { redirect } from '@sveltejs/kit';
 import { isTopReference, topPositionReference, TOP_REFERENCE_SPELLINGS } from '$lib/chief';
+import { isNoLoginEmail } from '$lib/no-login';
+import { NO_LOGIN } from '$lib/server/password-state';
+import { openablePortals } from '$lib/server/act-as';
 import type { Actions, PageServerLoad } from './$types';
 import { db } from '$lib/server/db/postgres';
 import {
@@ -304,11 +307,44 @@ export const load: PageServerLoad = async ({ locals }) => {
 	const codeByUser = new Map(codeRows.map((r) => [r.userId, r.employeeCode]));
 	const shiftByUser = new Map(codeRows.map((r) => [r.userId, r.shiftGroupId]));
 	const profileByUser = new Map(codeRows.map((r) => [r.userId, r]));
+
+	// Blue-collar workers (src/lib/no-login.ts) can't keep their own profile,
+	// so whoever may open their portal — their leaders, and HR — sees the
+	// details looking after them takes (src/lib/act-as.ts). Job, contact and
+	// emergency details only: government IDs and bank details stay with HR.
+	const portalIds = await openablePortals(user, roster);
+	const detailIds = [...portalIds];
+	const detailRows =
+		detailIds.length > 0
+			? await db
+					.select({
+						userId: employeeProfiles.userId,
+						designation: employeeProfiles.designation,
+						department: employeeProfiles.subProcessDepartment,
+						teamAndFloor: employeeProfiles.teamAndFloor,
+						dateOfJoining: employeeProfiles.dateOfJoining,
+						phone: employeeProfiles.phone,
+						gender: employeeProfiles.gender,
+						dateOfBirth: employeeProfiles.dobActual,
+						dobDocuments: employeeProfiles.dobDocuments,
+						bloodGroup: employeeProfiles.bloodGroup,
+						address: employeeProfiles.address,
+						permanentAddress: employeeProfiles.permanentAddress,
+						emergencyContactName: employeeProfiles.emergencyContactName,
+						emergencyContactRelationship: employeeProfiles.emergencyContactRelationship,
+						emergencyContactPhone: employeeProfiles.emergencyContactPhone
+					})
+					.from(employeeProfiles)
+					.where(inArray(employeeProfiles.userId, detailIds))
+			: [];
+	const detailsByUser = new Map(
+		detailRows.map(({ userId, dobDocuments, ...d }) => [userId, { ...d, dateOfBirth: d.dateOfBirth ?? dobDocuments }])
+	);
 	const shiftGroupNameById = new Map(allShiftGroups.map((g) => [g.id, g.name]));
 	// Names for the reporting-manager and HR columns. Drawn from every user, not
 	// just this roster, because a manager can sit outside the team being viewed.
 	const allPeople = await db
-		.select({ id: users.id, fullName: users.fullName, role: users.role, teamId: users.teamId })
+		.select({ id: users.id, fullName: users.fullName, role: users.role, teamId: users.teamId, email: users.email })
 		.from(users)
 		.where(and(eq(users.isActive, true), notHidden))
 		.orderBy(users.fullName);
@@ -319,7 +355,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 	// would be offering choices Save is going to reject.
 	const assignablePeople = (
 		user.role === 'team_lead' ? allPeople.filter((p) => p.teamId === user.teamId) : allPeople
-	).map((p) => ({ id: p.id, fullName: p.fullName, role: p.role }));
+	).map((p) => ({ id: p.id, fullName: p.fullName, role: p.role, noLogin: isNoLoginEmail(p.email) }));
 
 	// One query for the whole roster — avoids an <img> request per row for
 	// employees who have no picture.
@@ -369,6 +405,10 @@ export const load: PageServerLoad = async ({ locals }) => {
 		id: r.id,
 		fullName: r.fullName,
 		email: r.email,
+		noLogin: isNoLoginEmail(r.email),
+		// Null unless this viewer looks after them (see detailsByUser).
+		details: detailsByUser.get(r.id) ?? null,
+		canOpenPortal: portalIds.has(r.id),
 		employeeCode: codeByUser.get(r.id) ?? null,
 		shiftGroupId: shiftByUser.get(r.id) ?? null,
 		shiftGroupName: shiftGroupNameById.get(shiftByUser.get(r.id) ?? '') ?? null,
@@ -518,7 +558,10 @@ export const actions: Actions = {
 			shiftGroupId: str('shiftGroupId'),
 			teamId: str('teamId') || null,
 			reportsTo: str('reportsTo') || null,
-			hrUserId: str('hrUserId') || null
+			hrUserId: str('hrUserId') || null,
+			// Asked only when the email is left blank (src/lib/no-login.ts).
+			blueCollar: str('blueCollar') === 'true',
+			employeeCode: str('employeeCode') || null
 		});
 		if (result.success) {
 			// Straight into their team and shift channels in Champ Chat.
@@ -558,7 +601,7 @@ export const actions: Actions = {
 		const parsedRows = parseResult.rows;
 		if (parsedRows.length === 0) {
 			return {
-				bulkImportError: `No employee rows found in "${parseResult.sheetName}" — every row needs at least a name and a work email.`
+				bulkImportError: `No employee rows found in "${parseResult.sheetName}" — every row needs at least a name, and a work email or a reporting manager.`
 			};
 		}
 
@@ -630,6 +673,9 @@ export const actions: Actions = {
 					else if (nameMatch) status = 'needs_review';
 					// A code already held by someone else can't be applied as-is.
 					else if (codeOwner) status = 'needs_review';
+					// No work email: someone has to say they are blue collar, and give
+					// them a manager, before the row can be created.
+					else if (isNoLoginEmail(r.officialEmail)) status = 'needs_review';
 
 					const notes = [
 						...(parseResult.repairs[rowIndex] ?? []),
@@ -766,6 +812,12 @@ export const actions: Actions = {
 		if (pending.length > 0) {
 			return { bulkImportError: `${pending.length} row(s) still need review before this import can be applied` };
 		}
+		// The review screen keeps these on the list; checked again here because a
+		// no-login account nobody looks after would be unreachable.
+		const unconfirmed = rows.filter((r) => r.status === 'ready' && isNoLoginEmail(r.officialEmail) && (!r.blueCollar || !r.reportsToRowId));
+		if (unconfirmed.length > 0) {
+			return { bulkImportError: `${unconfirmed.length} row(s) have no work email: confirm each as blue collar with a reporting manager, or add an email` };
+		}
 
 		// When set, every credentials mail for this run goes to this one address
 		// instead of to the employees — for verifying the template and the Resend
@@ -806,7 +858,11 @@ export const actions: Actions = {
 			// roughly 50ms, which is the dominant per-row cost of a large import.
 			// With Clerk as the sign-in nobody is given one: they sign in with an
 			// emailed code and choose their own (password-state.ts).
-			const { temporaryPassword, passwordHash } = await newLoginCredentials();
+			// No work email (src/lib/no-login.ts): on the roster, never a login.
+			const noLogin = isNoLoginEmail(row.officialEmail);
+			const { temporaryPassword, passwordHash } = noLogin
+				? { temporaryPassword: null, passwordHash: NO_LOGIN }
+				: await newLoginCredentials();
 
 			const [createdUser] = await db
 				.insert(users)
@@ -816,7 +872,7 @@ export const actions: Actions = {
 					role: row.role,
 					fullName: row.fullName,
 					isActive: true,
-					mustChangePassword: true,
+					mustChangePassword: !noLogin,
 					// Kept readable on the roster until this person signs in and
 					// chooses their own. A master-tracker batch is exactly where the
 					// credentials mail goes wrong at scale, and re-running the import
@@ -828,9 +884,11 @@ export const actions: Actions = {
 			rowIdToUserId.set(row.id, createdUser.id);
 			// One bad address must not stop the rest of the batch; whoever is
 			// missing from Clerk is picked up by scripts/migrate-to-clerk.ts.
-			await addNewLoginToClerk(createdUser.id, temporaryPassword).catch((err) =>
-				console.error('[clerk] bulk create sync failed for', createdUser.email, err)
-			);
+			if (!noLogin) {
+				await addNewLoginToClerk(createdUser.id, temporaryPassword).catch((err) =>
+					console.error('[clerk] bulk create sync failed for', createdUser.email, err)
+				);
+			}
 
 			await db.insert(employeeProfiles).values({
 				userId: createdUser.id,
@@ -853,7 +911,7 @@ export const actions: Actions = {
 
 			// The credentials email is not sent here: it is queued after the loop and
 			// waits for an admin's approval (src/lib/server/login-emails.ts).
-			queuedUserIds.push(createdUser.id);
+			if (!noLogin) queuedUserIds.push(createdUser.id);
 
 			await logActivity({
 				actorUserId: actor.id,
@@ -866,7 +924,7 @@ export const actions: Actions = {
 					email: createdUser.email,
 					importId,
 					role: row.role,
-					welcomeEmail: 'queued for approval',
+					welcomeEmail: noLogin ? 'none: no login' : 'queued for approval',
 					welcomeEmailRedirectedTo: redirectAllMailTo || null
 				}
 			});

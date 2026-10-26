@@ -9,6 +9,8 @@ import { queueLoginEmails } from '$lib/server/login-emails';
 import { hasCap, invalidateCapabilities } from '$lib/server/capabilities';
 import { topFromPick, topLabel } from '$lib/chief';
 import { notHidden } from '$lib/server/hidden-users';
+import { isNoLoginEmail, noLoginEmail } from '$lib/no-login';
+import { NO_LOGIN } from '$lib/server/password-state';
 
 /**
  * Creating one login. Shared by the People form and Champ's "create a login"
@@ -43,6 +45,14 @@ export type NewLogin = {
 	/** A user id, CHIEF_PICK or MAM_PICK, or empty for none. */
 	reportsTo?: string | null;
 	hrUserId?: string | null;
+	/**
+	 * No work email, and the person is blue collar: on the roster with no login,
+	 * looked after by their reporting manager (src/lib/no-login.ts). Only read
+	 * when `email` is empty.
+	 */
+	blueCollar?: boolean;
+	/** Optional; matters most for blue-collar staff, whose attendance is biometric. */
+	employeeCode?: string | null;
 };
 
 export type CreateResult =
@@ -58,6 +68,10 @@ export type CreateResult =
 			emailError: string | null;
 			/** Queued for approval in Admin Controls › People. */
 			emailQueued: boolean;
+			/** Created as a blue-collar worker with no login. */
+			blueCollar?: boolean;
+			fullName?: string;
+			managerName?: string | null;
 	  };
 
 const UUID = /^[0-9a-f-]{36}$/i;
@@ -72,15 +86,21 @@ export async function createLogin(actor: SessionUser, input: NewLogin, opts: { s
 	const fullName = input.fullName.trim();
 
 	if (!canCreateLogins(actor)) return fail('You do not have the privilege to create logins');
-	if (!email || !fullName) return fail('Email and name are required');
-	if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return fail('That email address does not look right');
+	if (!fullName) return fail('Name is required');
+	// No work email: only a blue-collar worker, who gets no login at all.
+	const blueCollar = !email && Boolean(input.blueCollar);
+	if (!email && !blueCollar) return fail('Enter their work email, or say they are blue collar (no email, no login)');
+	if (email && (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || isNoLoginEmail(email))) {
+		return fail('That email address does not look right');
+	}
 	if (!input.shiftGroupId) return fail('Shift group is required');
 
 	// --- Access
 	let role: Role = 'employee';
 	let customRoleId: string | null = null;
 	let accessLabel = 'Employee';
-	const access = input.access || 'base:employee';
+	// A blue-collar worker never signs in, so any access beyond Employee is moot.
+	const access = blueCollar ? 'base:employee' : input.access || 'base:employee';
 	if (access.startsWith('named:')) {
 		if (!hasCap(actor, 'people.assign_roles')) return fail('Only a Super Admin can give a named role');
 		const id = access.slice(6);
@@ -116,13 +136,36 @@ export async function createLogin(actor: SessionUser, input: NewLogin, opts: { s
 	let reportsTo: string | null = actor.role === 'team_lead' ? actor.id : null;
 	const topPosition = actor.role === 'team_lead' ? null : topFromPick(input.reportsTo);
 	const reportsToChief = topPosition !== null;
+	let managerName: string | null = actor.role === 'team_lead' ? actor.fullName : null;
 	if (actor.role !== 'team_lead' && input.reportsTo) {
 		if (!reportsToChief) {
 			if (!UUID.test(input.reportsTo)) return fail('Pick a reporting manager from the list');
-			const [m] = await db.select({ id: users.id }).from(users).where(and(eq(users.id, input.reportsTo), notHidden)).limit(1);
+			const [m] = await db
+				.select({ id: users.id, email: users.email, fullName: users.fullName })
+				.from(users)
+				.where(and(eq(users.id, input.reportsTo), notHidden))
+				.limit(1);
 			if (!m) return fail('That reporting manager no longer exists');
+			if (blueCollar && isNoLoginEmail(m.email)) {
+				return fail(`${m.fullName} has no login either, so they can't look after a blue-collar worker`);
+			}
 			reportsTo = m.id;
+			managerName = m.fullName;
 		}
+	}
+	// Their manager is who opens their portal for them, so they need a person
+	// who can sign in: not Chief or Mam, and not nobody.
+	if (blueCollar && !reportsTo) return fail('Pick who they report to: their manager opens their portal for them');
+
+	let employeeCode: string | null = null;
+	if (input.employeeCode?.trim()) {
+		employeeCode = input.employeeCode.trim().toUpperCase();
+		const [taken] = await db
+			.select({ userId: employeeProfiles.userId })
+			.from(employeeProfiles)
+			.where(eq(employeeProfiles.employeeCode, employeeCode))
+			.limit(1);
+		if (taken) return fail(`Employee code ${employeeCode} already belongs to someone`);
 	}
 
 	let hrUserId: string | null = null;
@@ -141,17 +184,23 @@ export async function createLogin(actor: SessionUser, input: NewLogin, opts: { s
 		.limit(1);
 	if (!eligibleGroup) return fail('Selected shift group has no published holiday calendar');
 
-	const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
-	if (existing) return fail('A login with that email already exists');
+	if (!blueCollar) {
+		const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
+		if (existing) return fail('A login with that email already exists');
+	}
+	const loginEmail = blueCollar ? await freeNoLoginEmail(employeeCode, fullName) : email;
 
 	// With Clerk as the sign-in there is no temporary password: the person signs
-	// in with an emailed code and chooses their own (password-state.ts).
-	const { temporaryPassword: tempPassword, passwordHash } = await newLoginCredentials();
+	// in with an emailed code and chooses their own (password-state.ts). A
+	// blue-collar worker has neither.
+	const { temporaryPassword: tempPassword, passwordHash } = blueCollar
+		? { temporaryPassword: null, passwordHash: NO_LOGIN }
+		: await newLoginCredentials();
 
 	const [created] = await db
 		.insert(users)
 		.values({
-			email,
+			email: loginEmail,
 			passwordHash,
 			role,
 			customRoleId,
@@ -159,13 +208,13 @@ export async function createLogin(actor: SessionUser, input: NewLogin, opts: { s
 			teamId,
 			reportsTo,
 			isActive: true,
-			mustChangePassword: true,
+			mustChangePassword: !blueCollar,
 			// Readable on the roster until this person sets their own password,
 			// so a mail that never arrives doesn't strand the account.
 			temporaryPassword: tempPassword
 		})
 		.returning();
-	await addNewLoginToClerk(created.id, tempPassword);
+	if (!blueCollar) await addNewLoginToClerk(created.id, tempPassword);
 
 	await db.insert(employeeProfiles).values({
 		userId: created.id,
@@ -173,14 +222,15 @@ export async function createLogin(actor: SessionUser, input: NewLogin, opts: { s
 		hrUserId,
 		reportsToChief,
 		topPosition: topPosition ?? 'chief',
-		directReportingAuthority: topPosition ? topLabel(topPosition) : null
+		directReportingAuthority: topPosition ? topLabel(topPosition) : managerName,
+		employeeCode
 	});
 	invalidateCapabilities(created.id);
 
 	// The welcome email waits for an admin to approve it (src/lib/server/
 	// login-emails.ts). The password stays in the response: whoever adds a
 	// single joiner is often sitting with them.
-	await queueLoginEmails([created.id], { source: opts.source ?? 'single', requestedBy: actor.id });
+	if (!blueCollar) await queueLoginEmails([created.id], { source: opts.source ?? 'single', requestedBy: actor.id });
 
 	await logActivity({
 		actorUserId: actor.id,
@@ -192,7 +242,8 @@ export async function createLogin(actor: SessionUser, input: NewLogin, opts: { s
 			namedRole: customRoleId ? accessLabel : null,
 			teamId,
 			shiftGroupId: input.shiftGroupId,
-			welcomeEmail: 'queued for approval'
+			blueCollar,
+			welcomeEmail: blueCollar ? 'none: blue collar, no login' : 'queued for approval'
 		}
 	});
 
@@ -200,9 +251,23 @@ export async function createLogin(actor: SessionUser, input: NewLogin, opts: { s
 		success: true,
 		userId: created.id,
 		tempPassword,
-		email,
+		email: loginEmail,
 		emailSent: false,
 		emailError: null,
-		emailQueued: true
+		emailQueued: !blueCollar,
+		blueCollar,
+		fullName,
+		managerName
 	};
+}
+
+/** A placeholder address nobody holds yet: the code or name, then .2, .3, ... */
+async function freeNoLoginEmail(employeeCode: string | null, fullName: string): Promise<string> {
+	const base = noLoginEmail(employeeCode, fullName);
+	const [local, domain] = base.split('@');
+	for (let n = 1; ; n++) {
+		const candidate = n === 1 ? base : `${local}.${n}@${domain}`;
+		const [taken] = await db.select({ id: users.id }).from(users).where(eq(users.email, candidate)).limit(1);
+		if (!taken) return candidate;
+	}
 }

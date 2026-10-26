@@ -7,6 +7,11 @@ declare global {
 		// interface Error {}
 		interface Locals {
 			user: SessionUser | null;
+			/**
+			 * Who is really signed in, while they have a blue-collar worker's
+			 * portal open (src/lib/server/act-as.ts); `user` is then the worker.
+			 */
+			actingFor?: { id: string; fullName: string } | null;
 			/** Set by Clerk's handler, only while AUTH_PROVIDER=clerk (src/hooks.server.ts). */
 			auth?: (options?: import('@clerk/shared/types').PendingSessionOptions) => import('@clerk/backend').SessionAuthObject;
 		}

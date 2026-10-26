@@ -6,6 +6,7 @@ import { looksLikeEmail } from '$lib/server/bulk-import';
 import { eq, and, ne } from 'drizzle-orm';
 import { requireCap } from '$lib/server/capabilities';
 import { isTopReference, topLabel } from '$lib/chief';
+import { isNoLoginEmail } from '$lib/no-login';
 
 const VALID_ROLES = ['super_admin', 'admin', 'team_lead', 'employee'] as const;
 
@@ -123,8 +124,42 @@ export const PATCH: RequestHandler = async (event) => {
 		}
 	}
 
+	// --- Blue collar (src/lib/no-login.ts) -------------------------------------
+	// A row with no work email is created only once the reviewer says the person
+	// is blue collar — no login, looked after by their reporting manager — and
+	// has given them a manager who can sign in to do that.
+	if ('blueCollar' in body) {
+		if (typeof body.blueCollar !== 'boolean') throw error(400, 'blueCollar must be true or false');
+		if (body.blueCollar && !isNoLoginEmail(patch.officialEmail ?? row.officialEmail)) {
+			throw error(400, 'Only a row with no work email can be marked blue collar');
+		}
+		patch.blueCollar = body.blueCollar;
+		if (body.blueCollar) patch.role = 'employee';
+	}
+	// A real email makes it an ordinary login again.
+	if (patch.officialEmail) patch.blueCollar = false;
+	const managerRowId = 'reportsToRowId' in patch ? patch.reportsToRowId : row.reportsToRowId;
+	if (patch.blueCollar ?? row.blueCollar) {
+		const [manager] = managerRowId
+			? await db
+					.select({ fullName: bulkImportRows.fullName, officialEmail: bulkImportRows.officialEmail })
+					.from(bulkImportRows)
+					.where(eq(bulkImportRows.id, managerRowId))
+					.limit(1)
+			: [];
+		const problem = !manager
+			? `Pick ${row.fullName}'s reporting manager first: a blue-collar worker needs someone to look after them`
+			: isNoLoginEmail(manager.officialEmail)
+				? `${manager.fullName} has no login either, so they can't look after ${row.fullName}. Pick a manager who can sign in.`
+				: null;
+		// Asked for now: refuse. Already confirmed and the manager just changed:
+		// the confirmation lapses and the row goes back on the review list.
+		if (problem && body.blueCollar === true) throw error(400, problem);
+		if (problem) patch.blueCollar = false;
+	}
+
 	if (Object.keys(patch).length === 0) {
-		throw error(400, 'No recognized fields to update (officialEmail, role, reportsToRowId, reportsToChief, duplicateDecision)');
+		throw error(400, 'No recognized fields to update (officialEmail, role, reportsToRowId, reportsToChief, duplicateDecision, blueCollar)');
 	}
 
 	// Editing email/role/manager on a row that only needed review for its REPORTING
@@ -132,6 +167,10 @@ export const PATCH: RequestHandler = async (event) => {
 	// only be cleared by an explicit duplicateDecision above, never implicitly.
 	if (row.status === 'needs_review' && !row.existingUserId && !('duplicateDecision' in body)) {
 		patch.status = 'ready';
+	}
+	// Still no email and not confirmed blue collar: it stays on the review list.
+	if ((patch.status ?? row.status) === 'ready' && isNoLoginEmail(patch.officialEmail ?? row.officialEmail) && !(patch.blueCollar ?? row.blueCollar)) {
+		patch.status = 'needs_review';
 	}
 
 	// A newly chosen manager, or Chief, makes a Team Lead — as at upload. Only an

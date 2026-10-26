@@ -666,7 +666,13 @@ export const bulkImportRows = pgTable('bulk_import_rows', {
 	role: roleEnum('role').default('employee').notNull(),
 	status: bulkImportRowStatusEnum('status').default('ready').notNull(),
 	existingUserId: uuid('existing_user_id').references(() => users.id),
-	createdUserId: uuid('created_user_id').references(() => users.id)
+	createdUserId: uuid('created_user_id').references(() => users.id),
+	/**
+	 * Confirmed blue collar: a row with no work email that the reviewer said is
+	 * a worker with no login, looked after by their reporting manager
+	 * (src/lib/no-login.ts). Until this is set, such a row needs review.
+	 */
+	blueCollar: boolean('blue_collar').default(false).notNull()
 });
 
 export const bulkImportsRelations = relations(bulkImports, ({ one, many }) => ({

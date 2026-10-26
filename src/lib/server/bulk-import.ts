@@ -6,6 +6,7 @@ import {
 	type SheetSummary
 } from '$lib/server/ai/map-spreadsheet';
 import { matchName } from '$lib/server/name-match';
+import { noLoginEmail } from '$lib/no-login';
 
 export interface ParsedImportRow {
 	// Identity & job — the minimum needed to create a login.
@@ -112,6 +113,7 @@ const HEADER_MAP: Record<string, keyof ParsedImportRow> = {
 	'employee code': 'employeeCode',
 	'employee id': 'employeeCode',
 	'name of the champion': 'fullName',
+	'name of the employee': 'fullName',
 	'employee name': 'fullName',
 	name: 'fullName',
 	designation: 'designation',
@@ -189,6 +191,12 @@ const HEADER_MAP: Record<string, keyof ParsedImportRow> = {
 	'emergency contact name': 'emergencyContactName',
 	'emergency contact relationship': 'emergencyContactRelationship',
 	'emergency contact number': 'emergencyContactPhone',
+	'contact number in case of emergency': 'emergencyContactPhone',
+	// The NON CIPL tracker's emergency-contact relationship, which sits right
+	// after "Contact Name in case of Emergency".
+	relationship: 'emergencyContactRelationship',
+	'father dob': 'fatherDob',
+	'mother dob': 'motherDob',
 
 	'under graduate': 'underGraduate',
 	graduate: 'graduate',
@@ -693,9 +701,15 @@ function readRows(
 		if (rowNumber <= headerRowNumber) return;
 
 		const fullName = at(row, 'fullName');
-		const officialEmail = at(row, 'officialEmail');
-		// A person needs at minimum a name and a work email to become a login.
-		if (!fullName || !officialEmail) return;
+		if (!fullName) return;
+		// No work email: possibly blue-collar staff (drivers, housekeeping,
+		// kitchen), kept under a placeholder address (src/lib/no-login.ts) for
+		// the reviewer to confirm and give a manager. A bare name with neither an
+		// employee code nor a manager is not someone to ask about — trackers
+		// carry section headings and notes in the name column.
+		const workEmail = at(row, 'officialEmail');
+		if (!workEmail && !at(row, 'reportingAuthorityRaw') && !at(row, 'employeeCode')) return;
+		const officialEmail = workEmail ?? noLoginEmail(at(row, 'employeeCode'), fullName);
 
 		const parsed: ParsedImportRow = {
 			employeeCode: at(row, 'employeeCode'),
@@ -769,6 +783,7 @@ function readRows(
 		};
 
 		const notes = repairMisalignedValues(parsed);
+		if (!workEmail) notes.unshift('no work email: confirm they are blue collar (no login; their reporting manager opens their portal for them), or add their email');
 		if (notes.length > 0) repairs[rows.length] = notes;
 		rows.push(parsed);
 	});
@@ -997,7 +1012,9 @@ export function suggestExistingUserMatch<T extends { id: string; fullName: strin
  *
  * A tie between two people resolves to no match rather than picking one: this is
  * a SUGGESTION the Super Admin confirms, and a blank is far easier to spot and
- * correct than a confident-looking wrong manager.
+ * correct than a confident-looking wrong manager. The one exception is a tie
+ * that only one of the tied people shares the row's team with — "Nagesh" for a
+ * resort driver is the resort's C Nagesh, not Nagesha G in the data team.
  */
 export function suggestReportsToIndex(
 	reportingAuthorityRaw: string | null,
@@ -1009,5 +1026,11 @@ export function suggestReportsToIndex(
 		.filter((_, i) => i !== selfIndex);
 
 	const result = matchName(reportingAuthorityRaw, candidates);
-	return result.status === 'matched' ? Number(result.key) : null;
+	if (result.status === 'matched') return Number(result.key);
+	const team = rows[selfIndex]?.teamAndFloor?.trim().toLowerCase();
+	if (result.status === 'ambiguous' && team) {
+		const sameTeam = result.tied.filter((c) => rows[Number(c.key)].teamAndFloor?.trim().toLowerCase() === team);
+		if (sameTeam.length === 1) return Number(sameTeam[0].key);
+	}
+	return null;
 }

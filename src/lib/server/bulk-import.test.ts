@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'vitest';
 import ExcelJS from 'exceljs';
-import { parseHrTeamSheet, type ParsedImportRow } from './bulk-import';
+import { parseHrTeamSheet, suggestReportsToIndex, type ParsedImportRow } from './bulk-import';
 
 /**
  * These cover the tracker's misaligned rows, where a value sits under a header
@@ -356,5 +356,64 @@ describe('non-scalar cell values', () => {
 		const result = await parseHrTeamSheet(Buffer.from(buffer) as never);
 		expect(result.rows[0].officialEmail).toBe('yet to be created');
 		expect(result.repairs[0].join(' ')).toMatch(/officialEmail .* is not an email address/);
+	});
+});
+
+describe('people with no work email', () => {
+	async function parseSheet(headers: string[], rows: (string | null)[][]) {
+		const workbook = new ExcelJS.Workbook();
+		const sheet = workbook.addWorksheet('Master Tracker');
+		sheet.addRow(headers);
+		for (const r of rows) sheet.addRow(r);
+		const buffer = await workbook.xlsx.writeBuffer();
+		return parseHrTeamSheet(Buffer.from(buffer) as never);
+	}
+	const headers = ['Emp Code', 'Name Of the Employee', 'Team ', 'Official E Mail ', 'Direct Reporting Authority'];
+
+	test('keeps a worker with a reporting manager, under a no-login placeholder', async () => {
+		const result = await parseSheet(headers, [
+			['INFRATECH0072', 'Hanamanth Havagirao', 'Resorts', 'hanamanth.h@championsmail.com', 'Hema Malini'],
+			['INFRATECH0212', 'Ramadass', 'Resorts', null, 'Hanamanth Havagirao']
+		]);
+		expect(result.strategy).toBe('known-headers');
+		expect(result.rows.map((r) => r.officialEmail)).toEqual([
+			'hanamanth.h@championsmail.com',
+			'infratech0212@no-login.invalid'
+		]);
+		expect(result.repairs[1]?.[0]).toMatch(/blue collar/);
+		expect(result.repairs[0]).toBeUndefined();
+	});
+
+	test('keeps a no-email row with only an employee code, to be given a manager at review', async () => {
+		const result = await parseSheet(headers, [['INFRATECH0002', 'Watchman', 'Resorts', null, null]]);
+		expect(result.rows.map((r) => r.officialEmail)).toEqual(['infratech0002@no-login.invalid']);
+	});
+
+	test('leaves out a bare name with no email, code or manager', async () => {
+		const result = await parseSheet(headers, [
+			['INFRATECH0001', 'Somebody', 'Resorts', 'somebody@championsmail.com', null],
+			[null, 'Housekeeping staff', null, null, null]
+		]);
+		expect(result.rows.map((r) => r.fullName)).toEqual(['Somebody']);
+	});
+});
+
+describe('reporting-line suggestion', () => {
+	const row = (fullName: string, teamAndFloor: string | null, reportingAuthorityRaw: string | null = null) =>
+		({ fullName, teamAndFloor, reportingAuthorityRaw }) as ParsedImportRow;
+
+	test('breaks a name tie by the one tied person in the same team', () => {
+		const rows = [
+			row('Nagesha G', 'Data Team'),
+			row('Nagesha H S', 'Sales Team'),
+			row('C Nagesh', 'Champion Luxury Resorts'),
+			row('Vinay L', 'Champion Luxury Resorts', 'Nagesh')
+		];
+		expect(suggestReportsToIndex('Nagesh', rows, 3)).toBe(2);
+	});
+
+	test('leaves a tie blank when the team does not single anyone out', () => {
+		const rows = [row('Nagesha G', 'Data Team'), row('Nagesha H S', 'Data Team'), row('Vinay L', 'Resorts', 'Nagesh')];
+		expect(suggestReportsToIndex('Nagesh', rows, 2)).toBeNull();
 	});
 });

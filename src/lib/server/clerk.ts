@@ -7,6 +7,7 @@ import { users } from './db/schema';
 import { eq } from 'drizzle-orm';
 import { hashPassword } from './auth';
 import { NO_PASSWORD_YET, hasPassword } from './password-state';
+import { isNoLoginEmail } from '../no-login';
 
 /**
  * Clerk as the portal's sign-in.
@@ -111,7 +112,8 @@ export async function mirrorPasswordToClerk(
 	if (!clerkConfigured()) return;
 	try {
 		const [row] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-		if (!row) return;
+		// Someone with no login (src/lib/no-login.ts) never gets a Clerk account.
+		if (!row || isNoLoginEmail(row.email)) return;
 		// A Clerk account made in the Dashboard with this email is linked, not
 		// duplicated: Clerk refuses a second account for the same address.
 		let clerkUserId = row.clerkUserId;
@@ -156,7 +158,7 @@ export async function ensureClerkAccount(userId: string): Promise<void> {
 	if (!clerkConfigured()) return;
 	try {
 		const [row] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-		if (!row || row.clerkUserId) return;
+		if (!row || row.clerkUserId || isNoLoginEmail(row.email)) return;
 		const { data } = await clerk().users.getUserList({ emailAddress: [row.email] });
 		let clerkUserId = data[0]?.id;
 		if (clerkUserId) {
