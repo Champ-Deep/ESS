@@ -24,7 +24,7 @@ import { hashPassword } from '$lib/server/auth';
 import { notHidden } from '$lib/server/hidden-users';
 import { addNewLoginToClerk, clerkAuthActive, ensureClerkAccount, mirrorPasswordToClerk, newLoginCredentials } from '$lib/server/clerk';
 import { randomBytes } from 'node:crypto';
-import { logActivity, getPasswordActivity, getUsersWithProfilePicture } from '$lib/server/db/store';
+import { logActivity, getPasswordActivity, getUsersWithProfilePicture } from '$lib/server/db/mongo';
 import { canActOnUser } from '$lib/server/rbac';
 import { scopeIds } from '$lib/server/org-scope';
 import { teamPageAccess } from '$lib/server/team-access';
@@ -47,7 +47,6 @@ import { describeRoster, rotationSummary } from '$lib/week-off';
 import { isMailerConfigured } from '$lib/server/mailer';
 import { pendingCount as pendingLoginEmailCount, queueLoginEmails } from '$lib/server/login-emails';
 import { error } from '@sveltejs/kit';
-import { background } from '$lib/server/platform';
 
 /**
  * Every account created from the master tracker gets its own random temporary
@@ -566,7 +565,7 @@ export const actions: Actions = {
 		});
 		if (result.success) {
 			// Straight into their team and shift channels in Champ Chat.
-			background(syncMembershipFor(result.userId).catch((err) => console.error('[chat] sync failed:', err)));
+			void syncMembershipFor(result.userId).catch((err) => console.error('[chat] sync failed:', err));
 			const { userId: _id, ...rest } = result;
 			return rest;
 		}

@@ -64,42 +64,6 @@ export interface SendEmailInput {
 	text: string;
 }
 
-/**
- * Sends up to 100 messages in one request (Resend's batch endpoint). One
- * result per input, in order. Used for announcement copies, where pacing
- * single sends would outlast a Cloudflare request.
- */
-export async function sendEmailBatch(inputs: SendEmailInput[]): Promise<SendResult[]> {
-	const { apiKey, from } = config();
-	const results: SendResult[] = inputs.map((i) =>
-		isNoLoginEmail(i.to) ? { ok: false, error: 'This person has no login and no email address' } : { ok: false, error: 'not sent' }
-	);
-	if (!apiKey) return inputs.map(() => ({ ok: false, error: 'RESEND_API_KEY is not set' }));
-	const sendable = inputs.map((input, index) => ({ input, index })).filter(({ input }) => !isNoLoginEmail(input.to));
-	for (let at = 0; at < sendable.length; at += 100) {
-		const chunk = sendable.slice(at, at + 100);
-		try {
-			const res = await fetch(`${RESEND_ENDPOINT}/batch`, {
-				method: 'POST',
-				headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-				body: JSON.stringify(chunk.map(({ input }) => ({ from, to: [input.to], subject: input.subject, html: input.html, text: input.text })))
-			});
-			if (!res.ok) {
-				const detail = (await res.text().catch(() => '')).slice(0, 200);
-				for (const { index } of chunk) results[index] = { ok: false, error: `Resend returned ${res.status}${detail ? `: ${detail}` : ''}` };
-			} else {
-				const body = (await res.json().catch(() => ({}))) as { data?: { id?: string }[] };
-				chunk.forEach(({ index }, i) => (results[index] = { ok: true, id: body.data?.[i]?.id }));
-			}
-		} catch (err) {
-			for (const { index } of chunk) results[index] = { ok: false, error: err instanceof Error ? err.message : 'Unknown send error' };
-		}
-		// Resend allows a couple of requests a second; stay well under it.
-		if (at + 100 < sendable.length) await new Promise((r) => setTimeout(r, 600));
-	}
-	return results;
-}
-
 export async function sendEmail(input: SendEmailInput): Promise<SendResult> {
 	// A placeholder for someone with no login (src/lib/no-login.ts) is not a
 	// mailbox; refused here so no caller can bounce mail off it.

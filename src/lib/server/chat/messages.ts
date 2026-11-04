@@ -13,14 +13,13 @@ import {
 import { and, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import type { SessionUser } from '$lib/server/auth';
 import { hasCap } from '$lib/server/capabilities';
-import { getChatFile, insertChatFile, logActivity } from '$lib/server/db/store';
+import { getMongo, logActivity } from '$lib/server/db/mongo';
 import { detectSensitive, SENSITIVE_LABEL, type SensitiveKind } from '$lib/chat/rules';
 import { publish } from './bus';
 import { channelMemberIds, membership } from './access';
 import { deliverNotification } from './notify';
 import { resolveCards, type CardRef, type ResolvedCard } from './cards';
 import { notHidden } from '$lib/server/hidden-users';
-import { background } from '$lib/server/platform';
 
 export const MAX_BODY = 4000;
 
@@ -298,14 +297,14 @@ export async function sendMessage(viewer: SessionUser, input: SendInput): Promis
 				.map((m) => m.userId)
 		);
 		const title = c.kind === 'channel' ? `${sender} in #${c.name}` : c.kind === 'desk' ? `${sender} · Ask HR` : sender;
-		background(deliverNotification(alertIds.filter((id) => !skip.has(id)), { title, body: snippet, url, kind: c.kind === 'channel' ? 'mention' : c.kind === 'desk' ? 'desk' : 'dm' }).catch(() => {}));
+		void deliverNotification(alertIds.filter((id) => !skip.has(id)), { title, body: snippet, url, kind: c.kind === 'channel' ? 'mention' : c.kind === 'desk' ? 'desk' : 'dm' }).catch(() => {});
 	}
 
 	// "@Champ" anywhere in a person's message: Champ answers in the conversation.
 	if (!input.asSystem && /(^|\s)@champ\b/i.test(body) && c.kind !== 'system' && c.kind !== 'announcements') {
-		background(import('$lib/server/champ/in-chat')
+		void import('$lib/server/champ/in-chat')
 			.then((m) => m.answerInChannel(viewer, c.id, body, root?.id ?? null))
-			.catch((err) => console.error('[champ] in-chat failed:', err)));
+			.catch((err) => console.error('[champ] in-chat failed:', err));
 	}
 
 	const [view] = await serialize(viewer, [row]);
@@ -542,8 +541,16 @@ export async function storeFile(viewer: SessionUser, file: File) {
 	const buf = Buffer.from(await file.arrayBuffer());
 	const mime = sniffMime(buf, file.name);
 	if (!mime) return { ok: false as const, message: 'Share images, PDFs, Word, Excel, PowerPoint, CSV or text files' };
-	const id = await insertChatFile({ filename: file.name.slice(0, 200), mimeType: mime, bytes: buf, uploadedBy: viewer.id });
-	return { ok: true as const, file: { id, name: file.name.slice(0, 200), mime, size: file.size } };
+	const mongo = await getMongo();
+	const res = await mongo.collection('chat_files').insertOne({
+		filename: file.name.slice(0, 200),
+		mimeType: mime,
+		fileBase64: buf.toString('base64'),
+		byteSize: file.size,
+		uploadedBy: viewer.id,
+		createdAt: new Date()
+	});
+	return { ok: true as const, file: { id: res.insertedId.toString(), name: file.name.slice(0, 200), mime, size: file.size } };
 }
 
 /** A file, for someone in a conversation where it was shared. */
@@ -555,5 +562,8 @@ export async function readFile(viewer: SessionUser, fileId: string) {
 		.where(and(eq(chatMessages.fileId, fileId), isNull(chatMessages.deletedAt), isNull(chatMessages.hiddenAt)))
 		.limit(1);
 	if (!m) return null;
-	return getChatFile(fileId);
+	const { ObjectId } = await import('mongodb');
+	if (!ObjectId.isValid(fileId)) return null;
+	const mongo = await getMongo();
+	return mongo.collection('chat_files').findOne({ _id: new ObjectId(fileId) } as never) as Promise<{ filename: string; mimeType: string; fileBase64: string } | null>;
 }

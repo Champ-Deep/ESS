@@ -1,6 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { insertPolicyDocument, updatePolicyDocument, logActivity } from '$lib/server/db/store';
+import { insertPolicyDocument, updatePolicyDocument, logActivity } from '$lib/server/db/mongo';
 import { extractHolidayCalendar, extractLeavePolicy } from '$lib/server/ai/extract-policy';
 import { env } from '$env/dynamic/private';
 import { requireCap } from '$lib/server/capabilities';

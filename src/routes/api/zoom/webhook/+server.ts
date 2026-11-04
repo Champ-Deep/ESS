@@ -3,7 +3,6 @@ import type { RequestHandler } from './$types';
 import { urlValidationResponse, verifyZoomSignature } from '$lib/server/zoom/webhook';
 import { recordStatus, webhookSecret } from '$lib/server/zoom/client';
 import { ingestSummary, meetingEnded } from '$lib/server/meetings/service';
-import { background } from '$lib/server/platform';
 
 /**
  * Zoom events for Champ Hub. Signed by Zoom (src/lib/server/zoom/webhook.ts);
@@ -44,14 +43,14 @@ export const POST: RequestHandler = async ({ request }) => {
 		const uuid = String(obj.meeting_uuid ?? obj.uuid ?? '');
 		if (uuid) {
 			const meetingId = obj.meeting_id ?? obj.id;
-			background(ingestSummary(uuid, meetingId != null ? String(meetingId) : null).catch((err) => {
+			void ingestSummary(uuid, meetingId != null ? String(meetingId) : null).catch((err) => {
 				console.error('[zoom] summary ingest failed:', err);
 				void recordStatus({ lastError: err instanceof Error ? err.message : String(err) }).catch(() => {});
-			}));
+			});
 		}
 	} else if (body.event === 'meeting.ended') {
-		background(meetingEnded(obj as Parameters<typeof meetingEnded>[0]).catch((err) => console.error('[zoom] meeting.ended failed:', err)));
+		void meetingEnded(obj as Parameters<typeof meetingEnded>[0]).catch((err) => console.error('[zoom] meeting.ended failed:', err));
 	}
-	background(recordStatus({ lastEvent: body.event ?? 'unknown', lastEventAt: new Date().toISOString() }).catch(() => {}));
+	void recordStatus({ lastEvent: body.event ?? 'unknown', lastEventAt: new Date().toISOString() }).catch(() => {});
 	return json({ ok: true });
 };

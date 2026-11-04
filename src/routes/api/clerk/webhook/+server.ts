@@ -4,7 +4,7 @@ import { verifyWebhook } from 'svelte-clerk/webhooks';
 import { db } from '$lib/server/db/postgres';
 import { users } from '$lib/server/db/schema';
 import { eq } from 'drizzle-orm';
-import { logActivity } from '$lib/server/db/store';
+import { logActivity } from '$lib/server/db/mongo';
 
 /**
  * Clerk → portal events, signed by Svix with CLERK_WEBHOOK_SIGNING_SECRET.

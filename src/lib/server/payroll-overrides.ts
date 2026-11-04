@@ -2,7 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { db } from './db/postgres';
 import { payrollCellOverrides, users } from './db/schema';
-import { logActivity } from './db/store';
+import { logActivity } from './db/mongo';
 import { notHidden } from './hidden-users';
 import { ADDED_COLUMN, REMOVED_COLUMN, type CellOverride } from '$lib/payroll-sheet';
 import type { SheetKey } from './payroll-export';

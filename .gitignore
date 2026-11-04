@@ -39,7 +39,3 @@ docs/integration-credentials.md
 
 *.pem
 *.crx
-
-# Wrangler local secrets (wrangler dev)
-.dev.vars*
-!.dev.vars.example

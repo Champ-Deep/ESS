@@ -1,7 +1,0 @@
-# Copy to .dev.vars for `npm run cf:dev` (wrangler dev). When this file exists
-# wrangler does NOT read .env, so production keys in .env stay out of local runs.
-JWT_SECRET=local-only-access-secret-change-me
-JWT_REFRESH_SECRET=local-only-refresh-secret-change-me
-ORIGIN=http://localhost:8790
-PORTAL_URL=http://localhost:8790
-AUTH_PROVIDER=legacy

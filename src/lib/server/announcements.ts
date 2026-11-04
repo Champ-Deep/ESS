@@ -9,8 +9,7 @@ import {
 	users
 } from '$lib/server/db/schema';
 import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from 'drizzle-orm';
-import { sendEmailBatch, isMailerConfigured } from '$lib/server/mailer';
-import { background } from '$lib/server/platform';
+import { sendEmail, isMailerConfigured } from '$lib/server/mailer';
 import { badgeFor, buildFeed, istDate, summaryOf, type Feed, type FeedHoliday, type FeedPost } from '$lib/announcements';
 import { notHidden } from '$lib/server/hidden-users';
 
@@ -279,12 +278,20 @@ ${paragraphs.map((p) => `<p>${escapeHtml(p).replace(/\n/g, '<br>')}</p>`).join('
 	return { subject, html, text };
 }
 
-/** One message per person, sent through the batch endpoint 100 at a time. */
+const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Sends one message per person, paced to stay inside the provider's rate limit. */
 async function sendToAll(post: Announcement, recipients: Member[], reminder: boolean) {
 	const mail = buildEmail(post, reminder);
-	const results = await sendEmailBatch(recipients.map((r) => ({ to: r.email, ...mail })));
-	const sent = results.filter((r) => r.ok).length;
-	return { sent, failed: results.length - sent };
+	let sent = 0;
+	let failed = 0;
+	for (const r of recipients) {
+		const res = await sendEmail({ to: r.email, ...mail });
+		if (res.ok) sent++;
+		else failed++;
+		await pause(550);
+	}
+	return { sent, failed };
 }
 
 /**
@@ -322,8 +329,8 @@ export async function sendConfirmationReminder(id: string) {
 	const members = await loadMembers();
 	const pendingIds = new Set(found.pending.map((p) => p.id));
 	const recipients = members.filter((m) => pendingIds.has(m.id));
-	// Sending takes a few seconds for a few hundred people; the page does not wait.
-	background(sendToAll(found.post, recipients, true));
+	// Paced sending takes a while for a few hundred people; the page does not wait.
+	void sendToAll(found.post, recipients, true).catch((err) => console.error('[announcements] reminder failed:', err));
 	return { ok: true as const, count: recipients.length };
 }
 

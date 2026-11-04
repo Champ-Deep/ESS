@@ -1,6 +1,6 @@
 import { redirect } from '@sveltejs/kit';
 import type { LayoutServerLoad } from './$types';
-import { getProfilePicture, getUsersWithProfilePicture } from '$lib/server/db/store';
+import { getProfilePicture, getUsersWithProfilePicture } from '$lib/server/db/mongo';
 import { db } from '$lib/server/db/postgres';
 import { users } from '$lib/server/db/schema';
 import { and, eq, ne, or, asc, sql } from 'drizzle-orm';

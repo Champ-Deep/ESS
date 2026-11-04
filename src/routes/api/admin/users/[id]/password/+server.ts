@@ -7,7 +7,7 @@ import { hasCap } from '$lib/server/capabilities';
 import { hashPassword } from '$lib/server/auth';
 import { eq } from 'drizzle-orm';
 import { hiddenFrom } from '$lib/server/hidden-users';
-import { logActivity } from '$lib/server/db/store';
+import { logActivity } from '$lib/server/db/mongo';
 import { mirrorPasswordToClerk } from '$lib/server/clerk';
 import { userCanReach } from '$lib/server/org-scope';
 import { isNoLoginEmail } from '$lib/no-login';

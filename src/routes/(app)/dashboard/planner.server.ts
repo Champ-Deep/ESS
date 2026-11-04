@@ -18,7 +18,7 @@ import {
 	holidays
 } from '$lib/server/db/schema';
 import { and, eq, gte, inArray, lte, or } from 'drizzle-orm';
-import { getUsersWithProfilePicture } from '$lib/server/db/store';
+import { getUsersWithProfilePicture } from '$lib/server/db/mongo';
 import { loadWeekOffFor } from '$lib/server/week-off';
 import type { SessionUser } from '$lib/server/auth';
 import { leaveReach } from '$lib/server/org-scope';

@@ -1,7 +1,7 @@
 import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { requireUser } from '$lib/server/rbac';
-import { getProfilePicture } from '$lib/server/db/store';
+import { getProfilePicture } from '$lib/server/db/mongo';
 
 /**
  * Serves an employee's profile picture. Any signed-in user may view any

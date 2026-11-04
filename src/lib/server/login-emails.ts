@@ -3,7 +3,7 @@ import { appSettings, customRoles, loginEmails, users } from '$lib/server/db/sch
 import { and, desc, eq, inArray, isNotNull, or, sql } from 'drizzle-orm';
 import type { SessionUser } from '$lib/server/auth';
 import { hasCap } from '$lib/server/capabilities';
-import { logActivity } from '$lib/server/db/store';
+import { logActivity } from '$lib/server/db/mongo';
 import { isMailerConfigured, sendWelcomeEmail } from '$lib/server/mailer';
 import { clerkAuthActive } from '$lib/server/clerk';
 import { postToFeed } from '$lib/server/chat/cards';

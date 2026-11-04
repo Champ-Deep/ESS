@@ -3,7 +3,7 @@ import type { RequestHandler } from './$types';
 import { requireUser, canActOnUser } from '$lib/server/rbac';
 import { db } from '$lib/server/db/postgres';
 import { users, teams, employeeProfiles, shiftGroups, weekOffRosters, customRoles } from '$lib/server/db/schema';
-import { logActivity } from '$lib/server/db/store';
+import { logActivity } from '$lib/server/db/mongo';
 import { eq, and, ne } from 'drizzle-orm';
 import type { Role } from '$lib/server/auth';
 import { assignRoster, clearRoster } from '$lib/server/week-off';
@@ -13,7 +13,6 @@ import { invalidateOrgScope, userCanReach } from '$lib/server/org-scope';
 import { invalidateOrg } from '$lib/server/tasks/service';
 import { hiddenFrom, notHidden } from '$lib/server/hidden-users';
 import { asTopPosition } from '$lib/chief';
-import { background } from '$lib/server/platform';
 
 const ROLES: Role[] = ['super_admin', 'admin', 'team_lead', 'employee'];
 
@@ -359,7 +358,7 @@ export const PUT: RequestHandler = async (event) => {
 
 	invalidateCapabilities(userId);
 	// Shift group moves them between shift channels in Champ Chat.
-	background(syncMembershipFor(userId).catch((err) => console.error('[chat] sync failed:', err)));
+	void syncMembershipFor(userId).catch((err) => console.error('[chat] sync failed:', err));
 
 	await logActivity({
 		actorUserId: actor.id,

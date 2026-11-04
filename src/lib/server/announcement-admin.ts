@@ -10,10 +10,9 @@ import {
 	loadMembers,
 	sendConfirmationReminder
 } from '$lib/server/announcements';
-import { insertAnnouncementFile } from '$lib/server/db/store';
+import { insertAnnouncementFile } from '$lib/server/db/mongo';
 import { isMailerConfigured } from '$lib/server/mailer';
 import { hasCap } from '$lib/server/capabilities';
-import { background } from '$lib/server/platform';
 
 /**
  * Posting and managing announcements — the composer and "Posted" list shown
@@ -198,7 +197,7 @@ export const announcementActions = {
 
 		// Sending takes a while for a few hundred people; the page does not wait.
 		if (intent === 'publish' && fields.emailCopy) {
-			background(dispatchDueEmails().catch((err) => console.error('[announcements] email dispatch failed:', err)));
+			void dispatchDueEmails().catch((err) => console.error('[announcements] email dispatch failed:', err));
 		}
 
 		const scheduled = intent === 'publish' && when === 'later';

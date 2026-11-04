@@ -3,7 +3,7 @@ import { db } from '$lib/server/db/postgres';
 import { users, employeeProfiles } from '$lib/server/db/schema';
 import { and, eq, inArray } from 'drizzle-orm';
 import { notHidden } from '$lib/server/hidden-users';
-import { getUsersWithProfilePicture } from '$lib/server/db/store';
+import { getUsersWithProfilePicture } from '$lib/server/db/mongo';
 
 export const load: PageServerLoad = async ({ locals }) => {
 	const user = locals.user!;

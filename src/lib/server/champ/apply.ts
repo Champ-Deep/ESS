@@ -1,14 +1,13 @@
 import type { RequestEvent } from '@sveltejs/kit';
 import { db } from '$lib/server/db/postgres';
 import { sql } from 'drizzle-orm';
-import { logActivity } from '$lib/server/db/store';
+import { logActivity } from '$lib/server/db/mongo';
 import { createLogin } from '$lib/server/logins';
 import { saveNamedRole } from '$lib/server/roles';
 import { syncMembershipFor } from '$lib/server/chat/sync';
 import { decisionEndpoint, type RequestKind } from '$lib/server/chat/cards';
 import type { Role, SessionUser } from '$lib/server/auth';
 import type { ChampCardKind } from '$lib/champ';
-import { background } from '$lib/server/platform';
 
 /**
  * What a Champ card's button does. Wherever the portal already has an
@@ -53,7 +52,7 @@ export async function applyCard(event: RequestEvent, kind: ChampCardKind, action
 		case 'create_login': {
 			const r = await createLogin(user, payload as never, { source: 'champ' });
 			if (!r.success) return { ok: false, message: r.message };
-			background(syncMembershipFor(r.userId).catch(() => {}));
+			void syncMembershipFor(r.userId).catch(() => {});
 			result = {
 				ok: true,
 				message: `Created. The welcome email to ${r.email} waits for an admin to approve it in Admin Controls › People. ${r.tempPassword ? `Temporary password: ${r.tempPassword}` : 'No password is set: they sign in with a code sent to their email, then choose their own.'}`

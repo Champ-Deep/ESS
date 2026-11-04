@@ -3,14 +3,13 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db/postgres';
 import { compOffCredits } from '$lib/server/db/schema';
 import { desc, eq } from 'drizzle-orm';
-import { logActivity } from '$lib/server/db/store';
+import { logActivity } from '$lib/server/db/mongo';
 import {
 	evaluateCompOffEligibility,
 	compOffExpiryFor,
 	lapseExpiredCompOffs
 } from '$lib/server/comp-off';
 import { notifyNewRequest, notifyDecision } from '$lib/server/chat/cards';
-import { background } from '$lib/server/platform';
 
 /** The employee's own comp-off credits, with expired ones lapsed first (SOP §1). */
 export const GET: RequestHandler = async ({ locals, url }) => {
@@ -78,6 +77,6 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 	});
 
 	// Champ Chat: a card in each approver's ESS feed, and every copy kept current.
-	background(notifyNewRequest('comp_off', created.id).catch((err) => console.error('[chat] card failed:', err)));
+	void notifyNewRequest('comp_off', created.id).catch((err) => console.error('[chat] card failed:', err));
 	return json({ credit: created });
 };

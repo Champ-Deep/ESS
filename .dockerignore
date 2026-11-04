@@ -37,3 +37,6 @@ Dockerfile
 docker-compose.yml
 README.md
 PRODUCT.md
+
+# The Cloudflare wrapper (its own package and node_modules) is not part of the app.
+cloudflare

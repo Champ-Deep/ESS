@@ -1,30 +1,20 @@
 import type { RequestHandler } from './$types';
 import { error } from '@sveltejs/kit';
-import { chatHub, register } from '$lib/server/chat/bus';
+import { register } from '$lib/server/chat/bus';
 import { heartbeat } from '$lib/server/chat/presence';
 
 /**
  * The live stream for one browser tab: Server-Sent Events.
  *
  * SSE rather than WebSockets because it is an ordinary HTTP response — it
- * works through Cloudflare, proxies and office firewalls — and chat traffic
- * is almost all server-to-browser. The browser reconnects by itself; on
- * reconnect the page re-reads its sidebar and open conversation, so nothing
- * sent in between is missed.
- *
- * On Cloudflare the stream itself is held by the ChatHub Durable Object
- * (cloudflare/chat-hub.ts); this route signs the person in and hands the
- * connection over. Under Node it is held here.
+ * works with adapter-node as built, through Railway's proxy and office
+ * firewalls — and chat traffic is almost all server-to-browser. The browser
+ * reconnects by itself; on reconnect the page re-reads its sidebar and open
+ * conversation, so nothing sent in between is missed.
  */
 export const GET: RequestHandler = async ({ locals, request }) => {
 	const user = locals.user;
 	if (!user) throw error(401, 'Sign in again to continue');
-
-	const hub = chatHub();
-	if (hub) {
-		await heartbeat(user.id);
-		return hub.fetch(new Request(`https://chat-hub/stream?u=${encodeURIComponent(user.id)}`, { signal: request.signal }));
-	}
 
 	let unregister: (() => void) | null = null;
 	let keepAlive: ReturnType<typeof setInterval> | null = null;

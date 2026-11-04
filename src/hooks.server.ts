@@ -23,25 +23,24 @@ import { startClerkAccountSync } from '$lib/server/clerk-sync';
 import type { SessionUser } from '$lib/server/auth';
 import { clerkAuthActive, authorizedParties, userForClerkId } from '$lib/server/clerk';
 import { actingTarget } from '$lib/server/act-as';
-import { onCloudflare, runWithPlatform, type CloudflareBindings } from '$lib/server/platform';
 
-// Background jobs. On Cloudflare Workers there is no long-lived process, so
-// the cron trigger runs them instead (src/lib/server/cron.ts); under Node
-// (Docker, vite dev) they run on timers inside this process as before.
-if (!onCloudflare) {
-	// ProHance attendance poller. No-op unless PROHANCE_BASE_URL + Prohance_API_KEY
-	// are set; guarded internally against dev-HMR double starts.
-	startProhancePoller();
-	// Sends the email copy of scheduled announcements once they go live.
-	startAnnouncementScheduler();
-	// Champ Chat: roster sync, reminders, digests, celebrations, retention.
-	startChatScheduler();
-	// Approved login emails go out one at a time at the cadence HR set.
-	startLoginEmailSender();
-	// Copies every existing login into Clerk (same password) once Clerk keys are
-	// set, then hourly picks up anyone missing. No-op without keys.
-	startClerkAccountSync();
-}
+// Kicks off the ProHance attendance poller with the server process. No-op
+// unless PROHANCE_BASE_URL + Prohance_API_KEY are set; guarded internally
+// against dev-HMR double starts.
+startProhancePoller();
+
+// Sends the email copy of scheduled announcements once they go live.
+startAnnouncementScheduler();
+
+// Champ Chat: roster sync, reminders, digests, celebrations, retention.
+startChatScheduler();
+
+// Approved login emails go out one at a time at the cadence HR set.
+startLoginEmailSender();
+
+// Copies every existing login into Clerk (same password) once Clerk keys are
+// set, then hourly picks up anyone missing. No-op without keys.
+startClerkAccountSync();
 
 /** Privileges ride along on the request user (src/lib/capabilities.ts). */
 async function withCapabilities(user: SessionUser): Promise<SessionUser> {
@@ -53,7 +52,7 @@ async function withCapabilities(user: SessionUser): Promise<SessionUser> {
 // `void promise.catch(...)`; this is the net under anything that slips
 // through, so one failed notification can never take the whole portal down.
 const g = globalThis as { __essRejectionNet?: boolean };
-if (!g.__essRejectionNet && typeof process !== 'undefined' && typeof process.on === 'function' && !onCloudflare) {
+if (!g.__essRejectionNet) {
 	g.__essRejectionNet = true;
 	process.on('unhandledRejection', (reason) => {
 		console.error('[ess] unhandled rejection:', reason instanceof Error ? (reason.stack ?? reason.message) : reason);
@@ -163,31 +162,9 @@ const legacyGuarded = sequence(legacyHandle, actAs, signedInOnly);
 let clerkHandle: Handle | null = null;
 
 // Which sign-in runs is decided per request, so flipping AUTH_PROVIDER (or
-// rolling back) is a variable change plus restart/redeploy, not a rebuild.
-const signIn: Handle = (input) => {
+// rolling back) is a Railway variable change plus restart, not a rebuild.
+export const handle: Handle = (input) => {
 	if (!clerkAuthActive()) return legacyGuarded(input);
 	clerkHandle ??= sequence(withClerkHandler({ authorizedParties: authorizedParties() }), essUserFromClerk, actAs, signedInOnly);
 	return clerkHandle(input);
-};
-
-/**
- * Every request runs with its Cloudflare bindings and execution context
- * available to library code (src/lib/server/platform.ts): the per-request
- * Postgres pool, R2, the chat and key-value Durable Objects, and waitUntil for
- * background work.
- */
-export const handle: Handle = async (input) => {
-	const platform = input.event.platform as { env?: CloudflareBindings; ctx?: { waitUntil(p: Promise<unknown>): void } } | undefined;
-	const response = await runWithPlatform(platform?.env ?? {}, platform?.ctx ?? null, async () => signIn(input));
-	// Pages are per person. adapter-cloudflare stores responses in the edge
-	// cache unless told otherwise, so anything that did not choose its own
-	// caching is marked private.
-	if (onCloudflare && !response.headers.has('Cache-Control')) {
-		try {
-			response.headers.set('Cache-Control', 'private, no-store');
-		} catch {
-			/* immutable headers (a proxied response): leave as is */
-		}
-	}
-	return response;
 };

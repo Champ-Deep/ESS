@@ -2,7 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db/postgres';
 import { weekOffRosters, weekOffAssignments, teams } from '$lib/server/db/schema';
-import { logActivity } from '$lib/server/db/store';
+import { logActivity } from '$lib/server/db/mongo';
 import { eq } from 'drizzle-orm';
 import { validateRosterInput } from '$lib/week-off';
 import { requireCap } from '$lib/server/capabilities';

@@ -4,7 +4,7 @@ import { and, eq } from 'drizzle-orm';
 import { requireCap } from '$lib/server/capabilities';
 import { db } from '$lib/server/db/postgres';
 import { employeeProfiles, payrollAdjustments, users } from '$lib/server/db/schema';
-import { logActivity } from '$lib/server/db/store';
+import { logActivity } from '$lib/server/db/mongo';
 import { hiddenFrom } from '$lib/server/hidden-users';
 
 const ACTIONS = ['pay', 'stop', 'hold', 'sabbatical'];

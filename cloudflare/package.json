@@ -1,0 +1,17 @@
+{
+	"name": "champ-hr-cloudflare",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"deploy": "wrangler deploy",
+		"dev": "wrangler dev",
+		"tail": "wrangler tail",
+		"check": "tsc --noEmit"
+	},
+	"devDependencies": {
+		"@cloudflare/containers": "^0.3.7",
+		"@cloudflare/workers-types": "^5.20261104.1",
+		"typescript": "^7.0.2",
+		"wrangler": "^4.157.0"
+	}
+}

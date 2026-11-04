@@ -4,7 +4,7 @@ import { db } from '$lib/server/db/postgres';
 import { chatChannels, chatMessages, chatPrefs, pushSubscriptions, users } from '$lib/server/db/schema';
 import { and, asc, eq } from 'drizzle-orm';
 import { hasCap } from '$lib/server/capabilities';
-import { chatFileInfo, logActivity } from '$lib/server/db/store';
+import { getMongo, logActivity } from '$lib/server/db/mongo';
 import { publish, kv } from '$lib/server/chat/bus';
 import { channelMemberIds, dmCandidates, ensureDesk, loadChatPolicy, membership } from '$lib/server/chat/access';
 import { describeDmRule } from '$lib/chat/policy';
@@ -176,8 +176,11 @@ export const POST: RequestHandler = async (event) => {
 		if (data.file && typeof data.file === 'object') {
 			const f = data.file as { id: string; name: string; mime: string; size: number };
 			// Only a file you uploaded yourself can be attached.
-			const meta = typeof f.id === 'string' ? await chatFileInfo(f.id) : null;
-			if (!meta || meta.uploadedBy !== user.id) throw error(400, 'That file is not available');
+			const { ObjectId } = await import('mongodb');
+			if (!ObjectId.isValid(f.id)) throw error(400, 'That file is not available');
+			const stored = await (await getMongo()).collection('chat_files').findOne({ _id: new ObjectId(f.id), uploadedBy: user.id } as never);
+			if (!stored) throw error(400, 'That file is not available');
+			const meta = stored as unknown as { filename: string; mimeType: string; byteSize: number };
 			file = { id: f.id, name: meta.filename, mime: meta.mimeType, size: meta.byteSize };
 		}
 		return send(

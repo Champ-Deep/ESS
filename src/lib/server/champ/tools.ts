@@ -21,7 +21,7 @@ import { hasCap } from '$lib/server/capabilities';
 import { ensureLeaveAllocations } from '$lib/server/leave-accrual';
 import { reviewableUserIds } from '$lib/server/approval-chain';
 import { loadFeed } from '$lib/server/announcements';
-import { searchActivity } from '$lib/server/db/store';
+import { getMongo } from '$lib/server/db/mongo';
 import { workStatuses } from '$lib/server/chat/presence';
 import { CAPABILITIES, BASE_ROLE_LABEL, GRANTABLE_KEYS, effectiveCapabilities } from '$lib/capabilities';
 import { CHIEF_PICK, MAM_PICK, topLabel, topPositionReference } from '$lib/chief';
@@ -643,7 +643,7 @@ const searchAudit: Tool = {
 	allowed: (c) => c.mode === 'panel' && hasCap(c.user, 'champ.audit'),
 	run: async (a) => {
 		const since = new Date(Date.now() - Math.min(Number(a.days) || 30, 365) * 86_400_000);
-		const filter: { since: Date; actorUserId?: string; targetId?: string; actionLike?: string; limit: number } = { since, limit: 40 };
+		const filter: Record<string, unknown> = { createdAt: { $gte: since } };
 		if (str(a.person)) {
 			const { person, matches } = await findPerson(str(a.person));
 			if (!person) return ambiguous('person', matches);
@@ -654,8 +654,15 @@ const searchAudit: Tool = {
 			if (!person) return ambiguous('person', matches);
 			filter.targetId = person.id;
 		}
-		if (str(a.action)) filter.actionLike = str(a.action).replace(/[^\w.]/g, '');
-		const entries = await searchActivity(filter);
+		if (str(a.action)) filter.action = { $regex: str(a.action).replace(/[^\w.]/g, ''), $options: 'i' };
+		const mongo = await getMongo();
+		const entries = (await mongo.collection('activity_log').find(filter).sort({ createdAt: -1 }).limit(40).toArray()) as unknown as {
+			actorUserId: string;
+			action: string;
+			targetId?: string;
+			details?: Record<string, unknown>;
+			createdAt: Date;
+		}[];
 		const ids = [...new Set(entries.flatMap((e) => [e.actorUserId, e.targetId].filter(Boolean) as string[]))];
 		const names = ids.length ? new Map((await db.select({ id: users.id, n: users.fullName }).from(users).where(inArray(users.id, ids))).map((r) => [r.id, r.n])) : new Map();
 		return {

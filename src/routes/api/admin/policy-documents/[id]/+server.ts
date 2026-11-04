@@ -1,7 +1,7 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { requireCap } from '$lib/server/capabilities';
-import { deletePolicyDocument, getPolicyDocument, logActivity } from '$lib/server/db/store';
+import { deletePolicyDocument, getPolicyDocument, logActivity } from '$lib/server/db/mongo';
 
 /** The uploaded file itself, so an admin can check what a calendar or policy was read from. */
 export const GET: RequestHandler = async (event) => {

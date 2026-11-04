@@ -3,7 +3,7 @@ import { db } from '$lib/server/db/postgres';
 import { shiftGroups, holidayCalendars, holidays, leaveTypes } from '$lib/server/db/schema';
 import { desc } from 'drizzle-orm';
 import { gateAdminPage } from '$lib/server/capabilities';
-import { listPolicyDocuments } from '$lib/server/db/store';
+import { listPolicyDocuments } from '$lib/server/db/mongo';
 
 export const load: PageServerLoad = async ({ locals }) => {
 	gateAdminPage(locals, ['policies.publish']);

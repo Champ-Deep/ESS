@@ -2,7 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db/postgres';
 import { employeeProfiles } from '$lib/server/db/schema';
-import { logActivity } from '$lib/server/db/store';
+import { logActivity } from '$lib/server/db/mongo';
 import { and, eq, ne } from 'drizzle-orm';
 import { requireCap } from '$lib/server/capabilities';
 

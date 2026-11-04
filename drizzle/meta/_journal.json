@@ -246,13 +246,6 @@
       "when": 1793032380822,
       "tag": "0034_bulk_import_blue_collar",
       "breakpoints": true
-    },
-    {
-      "idx": 35,
-      "version": "7",
-      "when": 1793797201405,
-      "tag": "0035_cloudflare_records",
-      "breakpoints": true
     }
   ]
 }

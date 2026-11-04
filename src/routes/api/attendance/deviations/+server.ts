@@ -10,7 +10,7 @@ import {
 	prohanceDays
 } from '$lib/server/db/schema';
 import { and, eq, inArray, desc } from 'drizzle-orm';
-import { logActivity } from '$lib/server/db/store';
+import { logActivity } from '$lib/server/db/mongo';
 import {
 	triageDeviation,
 	DEVIATION_REASONS,
@@ -25,7 +25,6 @@ import {
 } from '$lib/server/comp-off';
 import { notifyNewRequest, notifyDecision } from '$lib/server/chat/cards';
 import { officeToday } from '$lib/server/shifts';
-import { background } from '$lib/server/platform';
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -233,7 +232,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 	});
 
 	// Champ Chat: a card in each approver's ESS feed, and every copy kept current.
-	background(notifyNewRequest('deviation', created.id).catch((err) => console.error('[chat] card failed:', err)));
+	void notifyNewRequest('deviation', created.id).catch((err) => console.error('[chat] card failed:', err));
 
 	return json({
 		deviation: created,

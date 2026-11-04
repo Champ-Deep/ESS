@@ -1,7 +1,7 @@
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { eq } from 'drizzle-orm';
-import { hashPassword } from '../password-hash';
+import { hash } from '@node-rs/argon2';
 import * as schema from './schema';
 
 /**
@@ -21,6 +21,7 @@ import * as schema from './schema';
  * Never stops the boot: a failure is logged and the portal starts anyway.
  */
 
+const ARGON2_OPTS = { memoryCost: 19456, timeCost: 2, parallelism: 1 };
 // NO_PASSWORD_YET from ../password-state.ts. Repeated, not imported: the
 // runtime image carries only this folder of src (see the Dockerfile).
 const NO_PASSWORD_YET = '!no-password-yet';
@@ -42,7 +43,7 @@ async function main() {
 			.insert(schema.users)
 			.values({
 				email,
-				passwordHash: password ? await hashPassword(password) : NO_PASSWORD_YET,
+				passwordHash: password ? await hash(password, ARGON2_OPTS) : NO_PASSWORD_YET,
 				role: 'super_admin',
 				fullName: process.env.DEVELOPER_FULL_NAME?.trim() || 'Developer',
 				isActive: true,

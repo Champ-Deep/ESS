@@ -3,7 +3,7 @@ import type { RequestHandler } from './$types';
 import { requireCap } from '$lib/server/capabilities';
 import { loadPayroll } from '$lib/server/payroll';
 import { payrollWorkbook, sheetCsv, SHEETS, SHEET_TITLES, type SheetKey } from '$lib/server/payroll-export';
-import { logActivity } from '$lib/server/db/store';
+import { logActivity } from '$lib/server/db/mongo';
 import { loadOverrides } from '$lib/server/payroll-overrides';
 
 /**
