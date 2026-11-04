@@ -1,0 +1,17 @@
+.pref-group {
+	min-width: 0;
+	color: var(--ess-text);
+	border-top: 1px solid var(--ess-border);
+}
+.pref-group > summary {
+	min-height: 44px;
+	padding: var(--ess-space-3) var(--ess-space-2);
+	cursor: pointer;
+	font-weight: 600;
+	color: var(--ess-text);
+}
+.pref-group > summary:hover { background: var(--ess-surface-hover); }
+.pref-group > summary:focus-visible {
+	outline: 2px solid var(--ess-primary-text);
+	outline-offset: -2px;
+}

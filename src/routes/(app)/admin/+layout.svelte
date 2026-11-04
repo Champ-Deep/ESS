@@ -15,9 +15,11 @@
 	import MessagesSquare from '@lucide/svelte/icons/messages-square';
 	import Video from '@lucide/svelte/icons/video';
 	import Search from '@lucide/svelte/icons/search';
-	import ChevronLeft from '@lucide/svelte/icons/chevron-left';
-	import ChevronRight from '@lucide/svelte/icons/chevron-right';
-	import { adminTabForPath, visibleAdminTabs, type AdminTabId } from '$lib/admin-tabs';
+	import UserPlus from '@lucide/svelte/icons/user-plus';
+	import Upload from '@lucide/svelte/icons/upload';
+	import CheckCheck from '@lucide/svelte/icons/check-check';
+	import NavMenu from '$lib/components/NavMenu.svelte';
+	import { adminNav, adminTabForPath, visibleAdminTabs, type AdminTabId } from '$lib/admin-tabs';
 	import { tabSeverities } from '$lib/admin-issues';
 	import { lockPageScroll } from '$lib/scroll-lock';
 	import SummaryStrip from '$lib/components/SummaryStrip.svelte';
@@ -42,6 +44,17 @@
 
 	const can = (key: string) => (data.adminCaps as string[]).includes(key);
 	const sectionTabs = $derived(visibleAdminTabs(data.adminCaps));
+	const tasks = $derived(
+		[
+			...(can('people.create_login') ? [{ href: '/admin/people?create=1', label: 'Create login', sub: 'Add a new team member and send their login email.', icon: UserPlus }] : []),
+			...(can('attendance.biometric_upload') ? [{ href: '/admin/biometric', label: 'Upload attendance', sub: 'Import attendance from a file (CSV or Excel).', icon: Upload }] : []),
+			...(can('leave.set_balances') ? [{ href: '/admin/leave-balances', label: 'Set leave balances', sub: 'Configure or update leave balances for individuals or groups.', icon: Calendar }] : []),
+			...(can('policies.publish') ? [{ href: '/admin/policies', label: 'Publish policy', sub: 'Review and publish a policy for your organisation.', icon: FileText }] : []),
+			{ href: '/leave', label: 'Approve leave requests', sub: 'Everything waiting on you.', icon: CheckCheck }
+		]
+	);
+
+	const navigation = $derived(adminNav(data.adminCaps));
 	const current = $derived(adminTabForPath(page.url.pathname));
 	const severities = $derived(tabSeverities(data.adminIssues));
 	const strip = $derived(current ? data.adminStrips[current.id] : undefined);
@@ -123,43 +136,6 @@
 
 	$effect(() => () => unlockScroll?.());
 
-	/* The tab bar scrolls sideways: keep the active tab in view, show the
-	   arrows and edge fades only on the side that has more tabs, and let
-	   a mouse wheel over the bar scroll it sideways. */
-	let tabBar = $state<HTMLElement | null>(null);
-	let canLeft = $state(false);
-	let canRight = $state(false);
-	function measureTabs() {
-		if (!tabBar) return;
-		canLeft = tabBar.scrollLeft > 2;
-		canRight = tabBar.scrollLeft + tabBar.clientWidth < tabBar.scrollWidth - 2;
-	}
-	function scrollTabs(dir: -1 | 1) {
-		tabBar?.scrollBy({ left: dir * Math.max(160, (tabBar.clientWidth ?? 0) * 0.6), behavior: 'smooth' });
-	}
-	function wheelTabs(e: WheelEvent) {
-		if (!tabBar || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
-		if (tabBar.scrollWidth <= tabBar.clientWidth) return;
-		e.preventDefault();
-		tabBar.scrollLeft += e.deltaY;
-	}
-	$effect(() => {
-		void current?.id;
-		tabBar?.querySelector('[aria-current="page"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-		measureTabs();
-	});
-	$effect(() => {
-		if (!tabBar) return;
-		const bar = tabBar;
-		const ro = new ResizeObserver(measureTabs);
-		ro.observe(bar);
-		// Not passive: a vertical wheel over the bar scrolls it sideways.
-		bar.addEventListener('wheel', wheelTabs, { passive: false });
-		return () => {
-			ro.disconnect();
-			bar.removeEventListener('wheel', wheelTabs);
-		};
-	});
 </script>
 
 <svelte:window onkeydown={onWindowKey} />
@@ -171,6 +147,7 @@
 	compact
 >
 	{#snippet actions()}
+		{#if current?.id === 'overview'}<NavMenu id="admin-new" label="New" items={tasks} action />{/if}
 		<button type="button" class="ess-btn ess-btn--secondary jump-btn" onclick={openJump} aria-label="Jump to a section or task" title="Jump to… (Ctrl K)">
 			<Search size={15} />
 			<span class="jump-label">Jump to…</span>
@@ -178,27 +155,26 @@
 		</button>
 	{/snippet}
 	{#snippet tabs()}
-		<nav class="admin-tabs" aria-label="Admin sections" class:fade-l={canLeft} class:fade-r={canRight}>
-			<button type="button" class="tab-arrow left" hidden={!canLeft} onclick={() => scrollTabs(-1)} aria-label="Scroll sections left" tabindex="-1"><ChevronLeft size={16} /></button>
-			<div class="ess-tabs ess-tabs--line tab-row" bind:this={tabBar} onscroll={measureTabs}>
-				{#each sectionTabs as tab, i (tab.id)}
-					{@const Icon = ICONS[tab.id]}
-					{@const sev = severities[tab.id]}
-					{#if i > 0 && sectionTabs[i - 1].group !== tab.group}
-						<span class="group-sep" aria-hidden="true"></span>
+		<nav class="admin-tabs" aria-label="Admin sections">
+			<div class="ess-tabs ess-tabs--line tab-row">
+				{#each navigation as entry}
+					{#if entry.kind === 'menu'}
+						{@const worst = entry.tabs.some((tab) => severities[tab.id] === 'bad') ? 'bad' : entry.tabs.some((tab) => severities[tab.id] === 'warn') ? 'warn' : undefined}
+						<NavMenu id="admin-{entry.id}" label={entry.label}
+							items={entry.tabs.map((tab) => ({ ...tab, icon: ICONS[tab.id], current: current?.id === tab.id, severity: severities[tab.id], hint: tabHint(tab.id) }))}
+							active={entry.tabs.some((tab) => tab.id === current?.id)} severity={worst}
+							hint={tabHint(entry.tabs.find((tab) => severities[tab.id] === worst)?.id ?? entry.tabs[0].id)} />
+					{:else}
+						{@const tab = entry.tab}
+						{@const Icon = ICONS[tab.id]}
+						{@const sev = severities[tab.id]}
+						<a href={tab.href} class="ess-tab tab" aria-current={current?.id === tab.id ? 'page' : undefined} title={sev ? tabHint(tab.id) : undefined}>
+							<Icon size={16} strokeWidth={1.75} />{tab.label}
+							{#if sev && sev !== 'info'}<span class="dot" data-sev={sev}><span class="ess-sr-only">Needs attention</span></span>{/if}
+						</a>
 					{/if}
-					<a href={tab.href} class="ess-tab tab" aria-current={current?.id === tab.id ? 'page' : undefined} title={sev ? tabHint(tab.id) : undefined}>
-						<Icon size={16} strokeWidth={1.75} />
-						{tab.label}
-						{#if sev && sev !== 'info'}
-							<span class="dot" data-sev={sev}>
-								<span class="ess-sr-only">— needs attention</span>
-							</span>
-						{/if}
-					</a>
 				{/each}
 			</div>
-			<button type="button" class="tab-arrow right" hidden={!canRight} onclick={() => scrollTabs(1)} aria-label="Scroll sections right" tabindex="-1"><ChevronRight size={16} /></button>
 		</nav>
 	{/snippet}
 </PageHeader>
@@ -245,74 +221,16 @@
 		gap: 8px;
 	}
 
-	/* The section tabs sit in the page's header row and scroll sideways
-	   in the room it leaves them. */
-	.admin-tabs {
-		display: flex;
-		align-items: center;
-		gap: 4px;
-		min-width: 0;
-		width: 100%;
-	}
-	:global(.ess-page-head:has(nav.admin-tabs) .bar-tabs) {
-		flex: 1 1 0%;
-	}
-	.tab-row {
-		flex: 1 1 auto;
-		min-width: 0;
-		width: 100%;
-		overflow-x: auto;
-		scroll-behavior: smooth;
-		scrollbar-width: none;
-	}
-	/* Edge fades on the side(s) with more tabs to scroll to. */
-	.fade-l .tab-row {
-		-webkit-mask-image: linear-gradient(to right, transparent, #000 36px);
-		mask-image: linear-gradient(to right, transparent, #000 36px);
-	}
-	.fade-r .tab-row {
-		-webkit-mask-image: linear-gradient(to left, transparent, #000 36px);
-		mask-image: linear-gradient(to left, transparent, #000 36px);
-	}
-	.fade-l.fade-r .tab-row {
-		-webkit-mask-image: linear-gradient(to right, transparent, #000 36px, #000 calc(100% - 36px), transparent);
-		mask-image: linear-gradient(to right, transparent, #000 36px, #000 calc(100% - 36px), transparent);
-	}
-	.tab-arrow {
-		display: grid;
-		place-items: center;
-		flex-shrink: 0;
-		width: 28px;
-		height: 28px;
-		border-radius: 50%;
-		border: 1px solid var(--ess-border-subtle);
-		background: var(--ess-surface);
-		color: var(--ess-text-secondary);
-		box-shadow: 0 1px 3px rgba(20, 22, 40, 0.08);
-		cursor: pointer;
-	}
-	.tab-arrow:hover {
-		color: var(--ess-primary-text);
-		border-color: var(--ess-primary-soft);
-	}
-	.tab-arrow[hidden] {
-		display: none;
-	}
-	.tab-row::-webkit-scrollbar {
-		display: none;
-	}
-
-	.group-sep {
-		flex-shrink: 0;
-		width: 1px;
-		margin: 10px 6px;
-		background: var(--ess-border);
-	}
+	.admin-tabs { min-width: 0; width: 100%; }
+	:global(.ess-page-head:has(nav.admin-tabs) .bar-tabs) { flex: 1 1 auto; }
+	:global(.ess-page-head .bar-tabs > nav.admin-tabs) { overflow: visible; }
+	.tab-row { flex-wrap: wrap; overflow: visible; width: 100%; gap: 4px; }
 
 	.tab {
 		flex-shrink: 0;
 		white-space: nowrap;
 		padding: 9px 14px;
+		min-height: 44px;
 		font-size: 13px;
 	}
 	.tab :global(svg) {
@@ -485,10 +403,6 @@
 			padding-top: 6px;
 			padding-bottom: 6px;
 			font-size: 12.5px;
-		}
-		.group-sep {
-			margin-top: 7px;
-			margin-bottom: 7px;
 		}
 		.admin-body {
 			gap: 10px;

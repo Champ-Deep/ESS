@@ -39,6 +39,7 @@ export type AdminTab = {
 	/** Which mockup category the tab sits in: People, Attendance, Leave, Policies, Access, System. */
 	category: 'People' | 'Attendance' | 'Leave' | 'Policies' | 'Access' | 'System';
 	group: 0 | 1 | 2 | 3;
+	menu?: 'people' | 'time' | 'system';
 	/** Any one of these opens the tab. Empty = anyone who can open Admin Controls. */
 	caps: CapabilityKey[];
 };
@@ -66,6 +67,7 @@ export const ADMIN_TABS: AdminTab[] = [
 	},
 	{
 		id: 'people',
+		menu: 'people',
 		href: '/admin/people',
 		label: 'People',
 		heading: 'Manage every employee with care.',
@@ -76,6 +78,7 @@ export const ADMIN_TABS: AdminTab[] = [
 	},
 	{
 		id: 'biometric',
+		menu: 'time',
 		href: '/admin/biometric',
 		label: 'Attendance',
 		heading: 'Turn attendance data into clarity.',
@@ -86,6 +89,7 @@ export const ADMIN_TABS: AdminTab[] = [
 	},
 	{
 		id: 'balances',
+		menu: 'time',
 		href: '/admin/leave-balances',
 		label: 'Leave balances',
 		heading: 'Balances you can account for.',
@@ -106,6 +110,7 @@ export const ADMIN_TABS: AdminTab[] = [
 	},
 	{
 		id: 'org',
+		menu: 'people',
 		href: '/admin/org-chart',
 		label: 'Org chart',
 		heading: 'See how your people connect.',
@@ -116,6 +121,7 @@ export const ADMIN_TABS: AdminTab[] = [
 	},
 	{
 		id: 'access',
+		menu: 'people',
 		href: '/admin/access-control',
 		label: 'Roles & access',
 		heading: 'The right access for every role.',
@@ -126,6 +132,7 @@ export const ADMIN_TABS: AdminTab[] = [
 	},
 	{
 		id: 'chat',
+		menu: 'system',
 		href: '/admin/chat-rules',
 		label: 'Chat rules',
 		heading: 'Set clear boundaries for conversation.',
@@ -136,6 +143,7 @@ export const ADMIN_TABS: AdminTab[] = [
 	},
 	{
 		id: 'zoom',
+		menu: 'system',
 		href: '/admin/zoom',
 		label: 'Zoom',
 		heading: 'Bring meetings into your workday.',
@@ -146,6 +154,7 @@ export const ADMIN_TABS: AdminTab[] = [
 	},
 	{
 		id: 'cleanup',
+		menu: 'system',
 		href: '/admin/cleanup',
 		label: 'Data cleanup',
 		heading: 'Review carefully. Keep what matters.',
@@ -156,6 +165,7 @@ export const ADMIN_TABS: AdminTab[] = [
 	},
 	{
 		id: 'tweaks',
+		menu: 'system',
 		href: '/admin/tweaks',
 		label: 'Appearance',
 		heading: 'Make the workspace feel right.',
@@ -169,6 +179,26 @@ export const ADMIN_TABS: AdminTab[] = [
 /** The tabs a person with these privileges can open. */
 export function visibleAdminTabs(caps: readonly string[]): AdminTab[] {
 	return ADMIN_TABS.filter((t) => t.caps.length === 0 || t.caps.some((c) => caps.includes(c)));
+}
+
+export type AdminNavEntry =
+	| { kind: 'tab'; tab: AdminTab }
+	| { kind: 'menu'; id: NonNullable<AdminTab['menu']>; label: string; tabs: AdminTab[] };
+
+export function adminNav(caps: readonly string[]): AdminNavEntry[] {
+	const tabs = visibleAdminTabs(caps);
+	const entries: AdminNavEntry[] = [];
+	for (const id of ['overview', 'analytics', 'people', 'time', 'policies', 'system'] as const) {
+		if (id === 'people' || id === 'time' || id === 'system') {
+			const children = tabs.filter((tab) => tab.menu === id);
+			if (children.length === 1) entries.push({ kind: 'tab', tab: children[0] });
+			else if (children.length > 1) entries.push({ kind: 'menu', id, label: { people: 'People', time: 'Time off', system: 'System' }[id], tabs: children });
+		} else {
+			const tab = tabs.find((tab) => tab.id === id);
+			if (tab) entries.push({ kind: 'tab', tab });
+		}
+	}
+	return entries;
 }
 
 /**

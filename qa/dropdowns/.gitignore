@@ -1,0 +1,4 @@
+baseline/
+results/
+*.log
+__pycache__/

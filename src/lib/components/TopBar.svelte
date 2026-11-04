@@ -1,4 +1,5 @@
 <script lang="ts">
+	import '$lib/styles/disclosure.css';
 	import { goto } from '$app/navigation';
 	import Search from '@lucide/svelte/icons/search';
 	import Bell from '@lucide/svelte/icons/bell';
@@ -231,6 +232,8 @@
 						<button type="button" aria-pressed={theme === 'light'} onclick={() => setTheme('light')}><Sun size={14} /> Light</button>
 						<button type="button" aria-pressed={theme === 'dark'} onclick={() => setTheme('dark')}><Moon size={14} /> Dark</button>
 					</div>
+					<details class="pref-group">
+						<summary>Display</summary>
 					<div class="pref">
 						<span class="pref-label">Text size <b>{Math.round(TEXT_STEPS[textStep] * 100)}%</b></span>
 						<div class="text-size" role="group" aria-label="Text size">
@@ -258,6 +261,7 @@
 							<button type="button" aria-pressed={dock === 'fixed'} onclick={() => setDock('fixed')}><PanelLeft size={14} /> Fixed</button>
 						</div>
 					</div>
+					</details>
 					<div class="menu-sep"></div>
 					<form method="POST" action="/logout">
 						<button type="submit" role="menuitem" class="logout"><LogOut size={15} /> Log out</button>

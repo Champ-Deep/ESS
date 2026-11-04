@@ -1,7 +1,7 @@
 <script lang="ts">
-	import UserPlus from '@lucide/svelte/icons/user-plus';
+	import { onMount } from 'svelte';
+	import '$lib/styles/disclosure.css';
 	import Upload from '@lucide/svelte/icons/upload';
-	import Calendar from '@lucide/svelte/icons/calendar';
 	import FileText from '@lucide/svelte/icons/file-text';
 	import CheckCheck from '@lucide/svelte/icons/check-check';
 	import CircleCheck from '@lucide/svelte/icons/circle-check';
@@ -26,6 +26,15 @@
 	 * have no manager" comes back by itself once it becomes 24 — or disappears
 	 * for real once it is fixed.
 	 */
+	let activityOpen = $state(false);
+	onMount(() => {
+		try { activityOpen = localStorage.getItem('essAdminActivity') === 'true'; } catch { /* Storage is optional. */ }
+	});
+	function saveActivity(event: Event) {
+		activityOpen = (event.currentTarget as HTMLDetailsElement).open;
+		try { localStorage.setItem('essAdminActivity', String(activityOpen)); } catch { /* Keep this visit usable. */ }
+	}
+
 	const HIDDEN_KEY = 'essAdminHiddenIssues';
 	let hidden = $state<string[]>([]);
 
@@ -73,16 +82,6 @@
 	/* The leading number in a title ("3 attendance records…") is pulled out as the badge. */
 	const countOf = (i: AdminIssue) => i.title.match(/^(\d+)\b/)?.[1] ?? i.detail.match(/^(\d+)\b/)?.[1] ?? null;
 
-	const tasks = $derived(
-		[
-			...(can('people.create_login') ? [{ href: '/admin/people?create=1', label: 'Create login', sub: 'Add a new team member and send their login email.', icon: UserPlus }] : []),
-			...(can('attendance.biometric_upload') ? [{ href: '/admin/biometric', label: 'Upload attendance', sub: 'Import attendance from a file (CSV or Excel).', icon: Upload }] : []),
-			...(can('leave.set_balances') ? [{ href: '/admin/leave-balances', label: 'Set leave balances', sub: 'Configure or update leave balances for individuals or groups.', icon: Calendar }] : []),
-			...(can('policies.publish') ? [{ href: '/admin/policies', label: 'Publish policy', sub: 'Review and publish a policy for your organisation.', icon: FileText }] : []),
-			{ href: '/leave', label: 'Approve leave requests', sub: 'Everything waiting on you.', icon: CheckCheck }
-		]
-	);
-
 	const fmtDay = (iso: string) => new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' });
 	const fmtTime = (iso: string) => new Date(iso).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' });
 	const toneOf = (action: string) => (action.includes('delete') || action.includes('cleanup') || action.includes('failed') ? 'bad' : action.includes('create') || action.includes('publish') || action.includes('apply') ? 'ok' : 'accent');
@@ -92,7 +91,7 @@
 	<title>Admin Controls — Champ HR</title>
 </svelte:head>
 
-<div class="ess-split overview ess-fill">
+<div class="overview ess-fill">
 	<div class="ess-stack main-col">
 		<section class="ess-card" aria-labelledby="ops-title">
 			<div class="ess-card-head">
@@ -169,9 +168,9 @@
 		</section>
 
 		{#if data.recentActivity.length > 0}
-			<section class="ess-card ess-fill-card grow-card" aria-labelledby="activity-title">
+			<details class="pref-group activity-group" open={activityOpen} ontoggle={saveActivity}>
+				<summary>Recent admin activity</summary>
 				<div class="ess-card-head">
-					<h2 class="ess-h2" id="activity-title">Recent admin activity</h2>
 					{#if can('people.password_activity')}
 						<a class="ess-link" href="/admin/people?view=passwords">Password activity <ChevronRight size={14} /></a>
 					{/if}
@@ -192,31 +191,10 @@
 						</li>
 					{/each}
 				</ol>
-			</section>
+			</details>
 		{/if}
 	</div>
 
-	<aside class="ess-stack ess-stack--tight">
-		<section class="ess-card ess-fill-card tasks-card" aria-labelledby="tasks-title">
-			<div class="ess-card-head">
-				<h2 class="ess-h2" id="tasks-title">Start a task</h2>
-			</div>
-			<div class="task-list ess-scroll">
-				{#each tasks as task (task.href)}
-					{@const Icon = task.icon}
-					<a class="task" href={task.href}>
-						<span class="ess-tile task-tile"><Icon size={18} strokeWidth={1.75} /></span>
-						<span class="task-text">
-							<strong>{task.label}</strong>
-							<span>{task.sub}</span>
-						</span>
-						<ChevronRight size={16} class="chev" />
-					</a>
-				{/each}
-			</div>
-			<p class="ess-help hint">Press <kbd class="ess-kbd">Ctrl K</kbd> on any admin tab to jump straight to a section.</p>
-		</section>
-	</aside>
 </div>
 
 <style>
@@ -258,8 +236,7 @@
 		font-size: 12.5px;
 		color: var(--ess-text-secondary);
 	}
-	.figure :global(.chev),
-	.task :global(.chev) {
+	.figure :global(.chev) {
 		margin-left: auto;
 		color: var(--ess-text-muted);
 		flex: none;
@@ -381,149 +358,11 @@
 		text-align: right;
 	}
 
-	.task-list {
-		display: grid;
-		align-content: start;
-		gap: 8px;
-	}
-	.task {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		padding: 9px 12px;
-		border: 1px solid var(--ess-border);
-		border-radius: var(--ess-radius-md);
-		background: var(--ess-surface);
-		color: inherit;
-		transition: border-color var(--ess-t-fast);
-	}
-	.task:hover {
-		border-color: var(--ess-primary);
-	}
-	.task:focus-visible {
-		outline: none;
-		box-shadow: var(--ess-focus-ring);
-	}
-	.task-text {
-		display: grid;
-		gap: 2px;
-		min-width: 0;
-	}
-	.task-tile {
-		width: 36px;
-		height: 36px;
-		border-radius: var(--ess-radius-sm);
-	}
-	.task-text strong {
-		font-size: 14px;
-		font-weight: 600;
-	}
-	.task-text span {
-		font-size: 12.5px;
-		color: var(--ess-text-secondary);
-		line-height: 1.35;
-	}
-	.hint {
-		margin-top: 10px;
-		flex: none;
-	}
-
-	/* Fill layout: the columns end on the workspace's bottom edge; the issue
-	   list, the activity log and the task list scroll inside their cards. */
-	@media (min-width: 1101px) and (min-height: 480px) {
-		@container ess-fill (min-width: 0px) {
-			.overview .main-col {
-				overflow: hidden;
-			}
-			.overview .main-col > .grow-card {
-				flex: 0 1 auto;
-				min-height: 150px;
-			}
-			.overview .main-col > .grow-card:last-child {
-				flex-grow: 1;
-			}
-			.overview .ess-scroll {
-				margin-right: -6px;
-				padding-right: 6px;
-			}
-			.overview .main-col > :first-child {
-				flex-shrink: 0;
-			}
-			.overview aside > .tasks-card {
-				flex: 1 1 0px;
-				min-height: 0;
-			}
-		}
-	}
-
-	/* Short desktop screens (a 1280x580 browser): slimmer figures and task
-	   rows so all five tasks show without scrolling, and the two lists share
-	   the rest of the main column. */
-	@media (min-width: 1101px) and (min-height: 480px) and (max-height: 800px) {
-		@container ess-fill (min-width: 0px) {
-			/* A wider task column keeps most task descriptions on one line. */
-			.overview {
-				--ess-aside-width: 440px;
-			}
-			.figures {
-				gap: 10px;
-			}
-			.figure {
-				padding: 6px 10px;
-				gap: 10px;
-			}
-			.figure .ess-tile {
-				width: 32px;
-				height: 32px;
-			}
-			.fig-text strong {
-				font-size: 19px;
-			}
-			.fig-text span {
-				font-size: 12px;
-			}
-			.overview .main-col > .grow-card {
-				min-height: 120px;
-			}
-			.item {
-				padding-top: 7px;
-				padding-bottom: 7px;
-			}
-			.item > .ess-tile {
-				width: 32px;
-				height: 32px;
-			}
-			.act {
-				padding: 6px 0;
-			}
-			.task-list {
-				gap: 6px;
-			}
-			.task {
-				padding: 6px 10px;
-				gap: 10px;
-			}
-			.task-tile {
-				width: 32px;
-				height: 32px;
-			}
-			.task-text {
-				gap: 1px;
-			}
-			.task-text strong {
-				font-size: 13.5px;
-				line-height: 1.25;
-			}
-			.task-text span {
-				font-size: 12px;
-				line-height: 1.3;
-			}
-			/* The Jump to… button above already shows the shortcut. */
-			.hint {
-				display: none;
-			}
-		}
-	}
+	.overview { min-width: 0; }
+	.main-col { min-width: 0; }
+	.activity-group { flex: none; }
+	.activity { max-height: 360px; overflow: auto; }
+	@media (hover: none) { .dismiss { opacity: 1; min-width: 44px; min-height: 44px; } }
 
 	@media (max-width: 960px) {
 		.figures {

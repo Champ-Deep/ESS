@@ -1,4 +1,5 @@
 <script lang="ts">
+	import '$lib/styles/disclosure.css';
 	import { onMount } from 'svelte';
 	import { invalidateAll } from '$app/navigation';
 	import Award from '@lucide/svelte/icons/award';
@@ -46,6 +47,14 @@
 	   analytics (the day's timeline, what needs you, activity, request
 	   progress, this month's hours and what's coming up). */
 	let view = $state<'today' | 'insights'>('today');
+	let moreOpen = $state(false);
+	onMount(() => {
+		try { moreOpen = localStorage.getItem('essHomeMore') === 'true'; } catch { /* Storage is optional. */ }
+	});
+	function saveMore(event: Event) {
+		moreOpen = (event.currentTarget as HTMLDetailsElement).open;
+		try { localStorage.setItem('essHomeMore', String(moreOpen)); } catch { /* Keep this visit usable. */ }
+	}
 
 	// Keep the figures fresh while the page stays open (every 5 minutes, and
 	// when the tab comes back into view).
@@ -240,10 +249,21 @@
 
 	<div class="lower">
 		<FutureEvents events={data.events} />
-		<AttendanceHeatmap analytics={data.analytics} missingCheckOuts={data.missingCheckOuts.length} />
-		<OnboardingPanel people={data.planner.onboarding} mode={data.planner.onboardingMode} />
 		<ChampCard {firstName} champ={data.champ} />
 	</div>
+	<details class="pref-group home-more" open={moreOpen} ontoggle={saveMore}>
+		<summary>More on your month</summary>
+		<div class="more-panels">
+			<section aria-label="Attendance heatmap">
+				<h2 class="ess-h2">Attendance heatmap</h2>
+				<AttendanceHeatmap analytics={data.analytics} missingCheckOuts={data.missingCheckOuts.length} />
+			</section>
+			<section aria-label="New joiners">
+				<h2 class="ess-h2">New joiners</h2>
+				<OnboardingPanel people={data.planner.onboarding} mode={data.planner.onboardingMode} />
+			</section>
+		</div>
+	</details>
 	{:else}
 		{@render insights()}
 	{/if}
@@ -486,7 +506,7 @@
 		display: grid;
 		/* The planner's calendar scrolls inside a capped box, so the card stays
 		   compact; the panels below take the rest. */
-		grid-template-rows: auto max-content minmax(250px, 1fr);
+		grid-template-rows: auto max-content minmax(160px, 1fr) auto;
 		gap: 14px;
 		min-height: 0;
 	}
@@ -558,7 +578,7 @@
 
 	.lower {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.25fr) minmax(0, 1fr);
+		grid-template-columns: repeat(2, minmax(0, 1fr));
 		gap: 14px;
 		min-height: 0;
 	}
@@ -572,7 +592,7 @@
 	   page scrolls. */
 	@media (min-width: 1101px) and (min-height: 480px) and (max-height: 800px) {
 		.home {
-			grid-template-rows: auto max-content minmax(160px, 1fr);
+			grid-template-rows: auto max-content minmax(120px, 1fr) auto;
 		}
 		:global(.ess-content > .home) {
 			flex: 1 1 auto;
@@ -805,6 +825,16 @@
 			}
 		}
 	}
+
+	.home:has(.home-more[open]) { display: flex; flex-direction: column; }
+	.home:has(.home-more[open]) > :global(*) { flex-shrink: 0; }
+	.home:has(.home-more[open]) .lower { min-height: 160px; }
+	/* The moved heatmap now sizes to its contents, not a fixed dashboard row. */
+	.more-panels :global(.fit) { container-type: normal; overflow: visible; }
+	.home-more { min-width: 0; }
+	.more-panels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+	.more-panels section { min-width: 0; }
+	@media (max-width: 720px) { .more-panels { grid-template-columns: minmax(0, 1fr); } }
 
 	/* ---------- header: view tabs ---------- */
 	.view-tabs {
