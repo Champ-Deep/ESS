@@ -209,16 +209,22 @@ is lost. Files uploaded on Cloudflare in the meantime are in R2, not Mongo.
 
 ## 9. ⚠ ProHance needs attention
 
-ProHance only accepts calls from **whitelisted IP addresses**. A Worker has no
-fixed outgoing IP, so the ProHance poll fails with `401 Invalid credentials`
-until one of these is done:
+ProHance only accepts calls from **whitelisted IP addresses**, and a Worker has
+no fixed outgoing IP. The ProHance poll would fail with `401 Invalid credentials`,
+so it ships **switched off**: `PROHANCE_POLL_MINUTES` is `"0"` in `wrangler.jsonc`.
+Everything else works.
 
-- **Ask the ProHance team to whitelist Cloudflare's IP ranges**
-  (https://www.cloudflare.com/ips/). This is the simplest option, but the ranges are broad.
-- **Keep a tiny relay** on a machine with a fixed IP (the Railway service, an
-  office server) that forwards the ProHance calls, and point `PROHANCE_BASE_URL`
-  at it.
-- Leave `PROHANCE_POLL_MINUTES=0` until it is decided. Everything else works.
+**Plan:** buy a dedicated egress (static) IP from Cloudflare, then:
+
+1. When talking to Cloudflare sales, confirm that the IP applies to **outgoing
+   `fetch()` calls from Workers**, not only to Zero Trust / Gateway traffic.
+2. Ask the ProHance team to whitelist that IP.
+3. Set `PROHANCE_POLL_MINUTES` back to `"30"` in `wrangler.jsonc` and run `npm run cf:deploy`.
+4. Watch `npm run cf:tail` for the next `[cron] prohance` run.
+
+Nothing is lost while it is off. Each run re-pulls from the 25th of the previous
+month, so the first run after it is switched on fills in the gap. (If the gap
+crosses a payroll cycle, run a manual sync from Admin for the older days.)
 
 EasyTime is not affected: its bridge pushes **to** the portal.
 
