@@ -6,7 +6,7 @@ import { and, eq, gte, isNull, or } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { requireUser } from '$lib/server/rbac';
 import { hasCap } from '$lib/server/capabilities';
-import { logActivity } from '$lib/server/db/mongo';
+import { logActivity } from '$lib/server/db/store';
 import { invalidateOrgScope, todayIst } from '$lib/server/org-scope';
 import type { SessionUser } from '$lib/server/auth';
 import { hiddenFrom } from '$lib/server/hidden-users';

@@ -4,7 +4,7 @@ import { canOpenPortal, startActing, stopActing } from '$lib/server/act-as';
 import { db } from '$lib/server/db/postgres';
 import { users } from '$lib/server/db/schema';
 import { eq } from 'drizzle-orm';
-import { logActivity } from '$lib/server/db/mongo';
+import { logActivity } from '$lib/server/db/store';
 
 /**
  * Opens (POST { userId }) or closes (DELETE) a blue-collar worker's portal.

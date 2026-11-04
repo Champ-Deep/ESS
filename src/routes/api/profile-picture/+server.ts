@@ -1,7 +1,7 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { requireUser } from '$lib/server/rbac';
-import { upsertProfilePicture, deleteProfilePicture, logActivity } from '$lib/server/db/mongo';
+import { upsertProfilePicture, deleteProfilePicture, logActivity } from '$lib/server/db/store';
 
 // Images arrive already resized to a small square by the browser (see
 // AvatarUpload.svelte), so anything large means the client-side step was

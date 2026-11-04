@@ -19,7 +19,7 @@ import {
 	compOffCredits,
 	tasks
 } from '$lib/server/db/schema';
-import { deleteProfilePicture } from '$lib/server/db/mongo';
+import { deleteProfilePicture } from '$lib/server/db/store';
 import { and, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { deleteClerkUser } from './clerk';
 import { notHidden } from './hidden-users';

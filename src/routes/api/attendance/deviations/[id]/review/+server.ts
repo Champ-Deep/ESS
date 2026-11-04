@@ -4,12 +4,13 @@ import { db } from '$lib/server/db/postgres';
 import { attendance, attendanceDeviations, users } from '$lib/server/db/schema';
 import { requireUser } from '$lib/server/rbac';
 import { and, eq } from 'drizzle-orm';
-import { logActivity } from '$lib/server/db/mongo';
+import { logActivity } from '$lib/server/db/store';
 import { canReviewStage, isSingleStageFor } from '$lib/server/approval-chain';
 import { notifyNewRequest, notifyDecision } from '$lib/server/chat/cards';
 import { hiddenFrom } from '$lib/server/hidden-users';
 import { deviceUtcOffsetMinutes } from '$lib/server/easytime-import';
 import { loadShiftsFor } from '$lib/server/shifts';
+import { background } from '$lib/server/platform';
 
 /**
  * SOP §2–§4: HR (or the Reporting Manager) decides an attendance correction.
@@ -169,6 +170,6 @@ export const POST: RequestHandler = async (event) => {
 	});
 
 	// Champ Chat: a card in each approver's ESS feed, and every copy kept current.
-	void notifyDecision('deviation', deviation.id, reviewer.id).catch((err) => console.error('[chat] card failed:', err));
+	background(notifyDecision('deviation', deviation.id, reviewer.id).catch((err) => console.error('[chat] card failed:', err)));
 	return json({ status: newStatus, attendanceCorrected });
 };

@@ -14,7 +14,7 @@ import {
 	holidays
 } from '$lib/server/db/schema';
 import { eq, and, gte, lt, sql, desc, inArray } from 'drizzle-orm';
-import { getUsersWithProfilePicture } from '$lib/server/db/mongo';
+import { getUsersWithProfilePicture } from '$lib/server/db/store';
 import { ensureLeaveAllocations } from '$lib/server/leave-accrual';
 import { meetingsToday } from '$lib/server/meetings/service';
 import { reviewableUserIds } from '$lib/server/approval-chain';

@@ -4,7 +4,7 @@ import { db } from '$lib/server/db/postgres';
 import { compOffCredits } from '$lib/server/db/schema';
 import { requireUser } from '$lib/server/rbac';
 import { eq } from 'drizzle-orm';
-import { logActivity } from '$lib/server/db/mongo';
+import { logActivity } from '$lib/server/db/store';
 
 /**
  * Withdraws a comp-off claim the employee raised themselves.

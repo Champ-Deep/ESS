@@ -1,0 +1,16 @@
+// Read only by adapter-cloudflare at build time (vite.config.ts) to decide where
+// the generated SvelteKit worker and static assets go. The deployable config is
+// ../wrangler.jsonc, whose `main` (cloudflare/worker.ts) imports that output.
+// Kept separate so the adapter never overwrites cloudflare/worker.ts, and so
+// `vite dev` runs without Cloudflare bindings (Node fallbacks: DATABASE_URL,
+// in-process chat and key-value store).
+{
+	"name": "champ-hr-ess",
+	"main": "../.svelte-kit/cloudflare/_worker.js",
+	"compatibility_date": "2026-10-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"assets": {
+		"directory": "../.svelte-kit/cloudflare",
+		"binding": "ASSETS"
+	}
+}

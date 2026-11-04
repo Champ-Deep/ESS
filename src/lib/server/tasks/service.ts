@@ -3,7 +3,7 @@ import { chatChannels, chatMessages, employeeProfiles, meetings, taskEvents, tas
 import { and, asc, desc, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm';
 import type { SessionUser } from '$lib/server/auth';
 import { hasCap } from '$lib/server/capabilities';
-import { logActivity } from '$lib/server/db/mongo';
+import { logActivity } from '$lib/server/db/store';
 import { publish } from '$lib/server/chat/bus';
 import { postToFeed } from '$lib/server/chat/cards';
 import { membership } from '$lib/server/chat/access';

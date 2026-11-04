@@ -11,13 +11,14 @@ import {
 import { requireUser } from '$lib/server/rbac';
 import { leaveReach } from '$lib/server/org-scope';
 import { and, eq, gte, lte, inArray, or, sql } from 'drizzle-orm';
-import { logActivity } from '$lib/server/db/mongo';
+import { logActivity } from '$lib/server/db/store';
 import { checkPinkLeaveEligibility, monthBounds } from '$lib/server/leave-eligibility';
 import { weekOffResolverForUser } from '$lib/server/week-off';
 import { isCompOffLeaveCode, spendableCredits, consumeCredits } from '$lib/server/comp-off';
 import { workingDaysInRange } from '$lib/week-off';
 import { notifyNewRequest, notifyDecision } from '$lib/server/chat/cards';
 import { notHidden } from '$lib/server/hidden-users';
+import { background } from '$lib/server/platform';
 
 /** Leave is booked in half days; float subtraction otherwise yields 2.9999… */
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -231,7 +232,7 @@ export const POST: RequestHandler = async (event) => {
 	});
 
 	// Champ Chat: a card in each approver's ESS feed, and every copy kept current.
-	void notifyNewRequest('leave', applied.id).catch((err) => console.error('[chat] card failed:', err));
+	background(notifyNewRequest('leave', applied.id).catch((err) => console.error('[chat] card failed:', err)));
 	return json({ application: applied, creditsSpent }, { status: 201 });
 };
 

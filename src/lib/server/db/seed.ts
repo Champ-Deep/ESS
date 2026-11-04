@@ -1,7 +1,7 @@
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { eq } from 'drizzle-orm';
-import { hash } from '@node-rs/argon2';
+import { hashPassword } from '../password-hash';
 import * as schema from './schema';
 
 const connectionString =
@@ -10,7 +10,6 @@ const connectionString =
 const pool = new Pool({ connectionString });
 const db = drizzle(pool, { schema });
 
-const ARGON2_OPTS = { memoryCost: 19456, timeCost: 2, parallelism: 1 };
 
 // Set these in Railway (or .env locally) before seeding — no default credential or PII
 // ships in the repo. Whoever sets SUPER_ADMIN_EMAIL/PASSWORD owns first login; they fill
@@ -37,7 +36,7 @@ async function seed() {
 		.values({ name: 'HR Team', departmentId: dept.id })
 		.returning();
 
-	const superAdminPasswordHash = await hash(SUPER_ADMIN_PASSWORD, ARGON2_OPTS);
+	const superAdminPasswordHash = await hashPassword(SUPER_ADMIN_PASSWORD);
 	const [superAdmin] = await db
 		.insert(schema.users)
 		.values({

@@ -12,7 +12,8 @@ import {
 	pgEnum,
 	uniqueIndex,
 	index,
-	check
+	check,
+	customType
 } from 'drizzle-orm/pg-core';
 import { relations, sql } from 'drizzle-orm';
 
@@ -1449,3 +1450,74 @@ export const loginEmails = pgTable('login_emails', {
 	error: text('error'),
 	createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
 });
+
+// --- Records that used to live in MongoDB (Cloudflare migration) ---
+// The activity log and uploaded files moved into Postgres so the portal runs on
+// Cloudflare Workers with one database. File bytes go to R2 (the FILES bucket)
+// keyed `files/<id>`; `data` is only used where there is no R2 — under Node, and
+// for rows copied over from Mongo until the cron job moves them into R2
+// (src/lib/server/db/store.ts). Ids carried over from Mongo keep their
+// ObjectId string so existing references (chat_messages.file_id,
+// announcements.attachment_id, *.source_document_id) still resolve.
+
+/** A Postgres `bytea` column, read and written as a Node Buffer. */
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({
+	dataType: () => 'bytea'
+});
+
+export const activityLog = pgTable(
+	'activity_log',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		actorUserId: text('actor_user_id').notNull(),
+		action: text('action').notNull(),
+		targetType: text('target_type').notNull(),
+		targetId: text('target_id'),
+		details: jsonb('details'),
+		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+	},
+	(t) => [
+		index('activity_log_created_idx').on(t.createdAt),
+		index('activity_log_action_idx').on(t.action, t.createdAt),
+		index('activity_log_actor_idx').on(t.actorUserId, t.createdAt),
+		index('activity_log_target_idx').on(t.targetId)
+	]
+);
+
+/** 'policy' | 'avatar' | 'announcement' | 'chat' */
+export const storedFiles = pgTable(
+	'stored_files',
+	{
+		id: text('id').primaryKey(),
+		kind: text('kind').notNull(),
+		/** For avatars, the user the picture belongs to (one per user). */
+		ownerId: text('owner_id'),
+		filename: text('filename').notNull(),
+		mimeType: text('mime_type').notNull(),
+		byteSize: integer('byte_size').notNull(),
+		uploadedBy: text('uploaded_by'),
+		/** Bytes held in Postgres; null once they are in R2. */
+		data: bytea('data'),
+		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull()
+	},
+	(t) => [uniqueIndex('stored_files_avatar_owner_idx').on(t.ownerId).where(sql`kind = 'avatar'`), index('stored_files_kind_idx').on(t.kind)]
+);
+
+export const policyDocuments = pgTable(
+	'policy_documents',
+	{
+		id: text('id').primaryKey(),
+		/** 'holiday_calendar' | 'leave_policy' */
+		kind: text('kind').notNull(),
+		fileId: text('file_id').notNull(),
+		uploadedBy: text('uploaded_by').notNull(),
+		extractedJson: jsonb('extracted_json'),
+		extractionModel: text('extraction_model'),
+		/** 'uploaded' | 'extracted' | 'extraction_failed' | 'published' */
+		status: text('status').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+		publishedAt: timestamp('published_at', { withTimezone: true })
+	},
+	(t) => [index('policy_documents_created_idx').on(t.createdAt)]
+);

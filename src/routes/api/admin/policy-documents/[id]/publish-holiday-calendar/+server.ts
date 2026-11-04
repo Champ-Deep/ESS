@@ -2,7 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db/postgres';
 import { shiftGroups, holidayCalendars, holidays } from '$lib/server/db/schema';
-import { updatePolicyDocument, logActivity } from '$lib/server/db/mongo';
+import { updatePolicyDocument, logActivity } from '$lib/server/db/store';
 import { eq, and, desc } from 'drizzle-orm';
 import { requireCap } from '$lib/server/capabilities';
 

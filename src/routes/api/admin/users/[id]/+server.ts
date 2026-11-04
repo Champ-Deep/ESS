@@ -2,7 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db/postgres';
 import { users } from '$lib/server/db/schema';
-import { logActivity } from '$lib/server/db/mongo';
+import { logActivity } from '$lib/server/db/store';
 import { deleteEmployee } from '$lib/server/admin-cleanup';
 import { and, eq } from 'drizzle-orm';
 import { hiddenFrom, notHidden } from '$lib/server/hidden-users';

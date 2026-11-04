@@ -4,11 +4,12 @@ import { db } from '$lib/server/db/postgres';
 import { compOffCredits, users } from '$lib/server/db/schema';
 import { requireUser } from '$lib/server/rbac';
 import { eq } from 'drizzle-orm';
-import { logActivity } from '$lib/server/db/mongo';
+import { logActivity } from '$lib/server/db/store';
 import { evaluateCompOffEligibility } from '$lib/server/comp-off';
 import { canReviewStage, isSingleStageFor } from '$lib/server/approval-chain';
 import { notifyNewRequest, notifyDecision } from '$lib/server/chat/cards';
 import { hiddenFrom } from '$lib/server/hidden-users';
+import { background } from '$lib/server/platform';
 
 /**
  * SOP §1: verify attendance, confirm 7+ hours, then credit the comp-off.
@@ -145,6 +146,6 @@ export const POST: RequestHandler = async (event) => {
 	});
 
 	// Champ Chat: a card in each approver's ESS feed, and every copy kept current.
-	void notifyDecision('comp_off', updated.id, approver.id).catch((err) => console.error('[chat] card failed:', err));
+	background(notifyDecision('comp_off', updated.id, approver.id).catch((err) => console.error('[chat] card failed:', err)));
 	return json({ credit: updated });
 };

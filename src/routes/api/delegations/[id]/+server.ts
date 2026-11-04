@@ -5,7 +5,7 @@ import { delegations } from '$lib/server/db/schema';
 import { and, eq, isNull } from 'drizzle-orm';
 import { requireUser } from '$lib/server/rbac';
 import { hasCap } from '$lib/server/capabilities';
-import { logActivity } from '$lib/server/db/mongo';
+import { logActivity } from '$lib/server/db/store';
 import { invalidateOrgScope } from '$lib/server/org-scope';
 
 /** Ends a delegation early. Kept as a row (revoked_at) so the audit holds. */

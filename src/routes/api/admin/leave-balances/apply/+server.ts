@@ -3,7 +3,7 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db/postgres';
 import { leaveTypes } from '$lib/server/db/schema';
 import { eq } from 'drizzle-orm';
-import { logActivity } from '$lib/server/db/mongo';
+import { logActivity } from '$lib/server/db/store';
 import {
 	parseLeaveBalanceSheet,
 	LeaveBalanceSheetError

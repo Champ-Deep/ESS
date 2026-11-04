@@ -1,5 +1,5 @@
 import type { PageServerLoad } from './$types';
-import { getMongo, type ActivityLogEntry } from '$lib/server/db/mongo';
+import { recentActivity, type ActivityLogEntry } from '$lib/server/db/store';
 import { db } from '$lib/server/db/postgres';
 import { users } from '$lib/server/db/schema';
 import { inArray } from 'drizzle-orm';
@@ -134,15 +134,9 @@ function describe(e: ActivityLogEntry): { title: string; meta: string } {
 export const load: PageServerLoad = async ({ locals }) => {
 	let entries: ActivityLogEntry[] = [];
 	try {
-		const mongo = await getMongo();
-		entries = await mongo
-			.collection<ActivityLogEntry>('activity_log')
-			.find({ action: { $in: ADMIN_ACTIONS } })
-			.sort({ createdAt: -1 })
-			.limit(8)
-			.toArray();
+		entries = await recentActivity(ADMIN_ACTIONS, 8);
 	} catch {
-		// Mongo down: the overview still works, just without the activity list.
+		// Log unreadable: the overview still works, just without the activity list.
 	}
 
 	const actorIds = [...new Set(entries.map((e) => e.actorUserId).filter(Boolean))];

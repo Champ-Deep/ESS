@@ -1,4 +1,4 @@
-import webpush from 'web-push';
+import { generateVAPIDKeys, sendNotification } from '$lib/server/webpush';
 import { env } from '$env/dynamic/private';
 import { db } from '$lib/server/db/postgres';
 import {
@@ -15,11 +15,12 @@ import {
 } from '$lib/server/db/schema';
 import { and, eq, inArray, isNull, lt, lte, sql } from 'drizzle-orm';
 import { isMailerConfigured, sendEmail } from '$lib/server/mailer';
-import { getMongo } from '$lib/server/db/mongo';
+import { deleteChatFiles } from '$lib/server/db/store';
 import { istDateKey } from '$lib/chat/rules';
-import { hasLocalStream, publish } from './bus';
+import { hasOpenStream, publish } from './bus';
 import { notHidden } from '$lib/server/hidden-users';
 import { onlineSet, workStatuses } from './presence';
+import { background } from '$lib/server/platform';
 
 /**
  * Getting someone's attention, fairly.
@@ -49,24 +50,24 @@ export async function vapidKeys() {
 		const [row] = await db.select().from(appSettings).where(eq(appSettings.key, 'vapid')).limit(1);
 		if (row) vapid = row.value as unknown as typeof vapid;
 		else {
-			const keys = webpush.generateVAPIDKeys();
+			const keys = await generateVAPIDKeys();
 			await db.insert(appSettings).values({ key: 'vapid', value: keys }).onConflictDoNothing();
 			const [again] = await db.select().from(appSettings).where(eq(appSettings.key, 'vapid')).limit(1);
 			vapid = (again?.value ?? keys) as unknown as typeof vapid;
 		}
 	}
-	webpush.setVapidDetails(`mailto:${env.RESEND_FROM?.match(/<(.+)>/)?.[1] ?? 'hr@champ-hr.com'}`, vapid!.publicKey, vapid!.privateKey);
 	return vapid!;
 }
 
 async function pushTo(userId: string, notice: Notice) {
 	const subs = await db.select().from(pushSubscriptions).where(eq(pushSubscriptions.userId, userId));
 	if (subs.length === 0) return;
-	await vapidKeys();
+	const keys = await vapidKeys();
+	const subject = `mailto:${env.RESEND_FROM?.match(/<(.+)>/)?.[1] ?? 'hr@champ-hr.com'}`;
 	const payload = JSON.stringify({ title: notice.title, body: notice.body.slice(0, 180), url: notice.url, tag: notice.kind });
 	for (const s of subs) {
 		try {
-			await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload, { TTL: 3600 });
+			await sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload, { vapid: keys, subject, TTL: 3600 });
 		} catch (err) {
 			const code = (err as { statusCode?: number }).statusCode;
 			// Gone or not found: the browser dropped this subscription.
@@ -91,8 +92,8 @@ export async function deliverNotification(userIds: string[], notice: Notice) {
 		await publish([id], { type: 'notify', ...notice, quiet, sound: pref?.sound ?? true });
 		if (quiet || pref?.push === false) continue;
 		// A tab open anywhere shows the pop-up itself; push is for a closed portal.
-		if (online.has(id) || hasLocalStream(id)) continue;
-		void pushTo(id, notice).catch(() => {});
+		if (online.has(id) || (await hasOpenStream(id))) continue;
+		background(pushTo(id, notice).catch(() => {}));
 	}
 }
 
@@ -233,9 +234,7 @@ export async function applyRetention(now = new Date()) {
 	if (old.length === 0) return 0;
 	const fileIds = old.map((o) => o.fileId).filter(Boolean) as string[];
 	if (fileIds.length) {
-		const { ObjectId } = await import('mongodb');
-		const mongo = await getMongo();
-		await mongo.collection('chat_files').deleteMany({ _id: { $in: fileIds.filter((f) => ObjectId.isValid(f)).map((f) => new ObjectId(f)) } } as never);
+		await deleteChatFiles(fileIds);
 	}
 	await db.delete(chatMessages).where(inArray(chatMessages.id, old.map((o) => o.id)));
 	return old.length;

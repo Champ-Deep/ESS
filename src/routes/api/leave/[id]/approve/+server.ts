@@ -11,11 +11,12 @@ import {
 } from '$lib/server/db/schema';
 import { requireUser } from '$lib/server/rbac';
 import { eq, and } from 'drizzle-orm';
-import { logActivity } from '$lib/server/db/mongo';
+import { logActivity } from '$lib/server/db/store';
 import { canReviewStage, isSingleStageFor } from '$lib/server/approval-chain';
 import { isCompOffLeaveCode, consumeCredits, releaseCredits } from '$lib/server/comp-off';
 import { notifyNewRequest, notifyDecision } from '$lib/server/chat/cards';
 import { hiddenFrom } from '$lib/server/hidden-users';
+import { background } from '$lib/server/platform';
 
 const newStatusFor = (decision: 'approve' | 'reject') =>
 	decision === 'approve' ? ('approved' as const) : ('rejected' as const);
@@ -248,6 +249,6 @@ export const POST: RequestHandler = async (event) => {
 	});
 
 	// Champ Chat: a card in each approver's ESS feed, and every copy kept current.
-	void notifyDecision('leave', applicationId, approver.id).catch((err) => console.error('[chat] card failed:', err));
+	background(notifyDecision('leave', applicationId, approver.id).catch((err) => console.error('[chat] card failed:', err)));
 	return json({ status: newStatus, reversed: isReversal, balanceDelta });
 };

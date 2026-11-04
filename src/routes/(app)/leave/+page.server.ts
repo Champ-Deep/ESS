@@ -16,7 +16,7 @@ import { loadWeekOffFor, currentRosterByUser } from '$lib/server/week-off';
 import { managerFor, reviewableUserIds } from '$lib/server/approval-chain';
 import { leaveReach } from '$lib/server/org-scope';
 import type { SessionUser } from '$lib/server/auth';
-import { getUsersWithProfilePicture } from '$lib/server/db/mongo';
+import { getUsersWithProfilePicture } from '$lib/server/db/store';
 import { notHidden } from '$lib/server/hidden-users';
 
 /**

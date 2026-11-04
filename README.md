@@ -40,3 +40,7 @@ npm run build
 You can preview the production build with `npm run preview`.
 
 > To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+
+## Deploying on Cloudflare
+
+The portal runs on Cloudflare Workers (Hyperdrive to Postgres, R2 for files, Durable Objects for chat and the shared key-value store, a cron trigger for background jobs). Setup and cut-over steps: [docs/cloudflare-deployment.md](docs/cloudflare-deployment.md). The Docker/Node build still works with `ADAPTER=node`.

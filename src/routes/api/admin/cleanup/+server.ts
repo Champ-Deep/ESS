@@ -1,6 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { logActivity } from '$lib/server/db/mongo';
+import { logActivity } from '$lib/server/db/store';
 import { runCleanup, type CleanupOptions } from '$lib/server/admin-cleanup';
 import { requireCap } from '$lib/server/capabilities';
 

@@ -1,7 +1,7 @@
 import { env } from '$env/dynamic/private';
 import type { SessionUser } from '$lib/server/auth';
 import { BASE_ROLE_LABEL } from '$lib/capabilities';
-import { logActivity } from '$lib/server/db/mongo';
+import { logActivity } from '$lib/server/db/store';
 import { kv } from '$lib/server/chat/bus';
 import { CHAMP_LIMITS, type ChampCard, type ChampMessage, type ChampReport, type ChampResult } from '$lib/champ';
 import { runTool, toolSchemas, type Caller } from './tools';

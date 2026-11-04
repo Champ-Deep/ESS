@@ -2,7 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { parseBiometricSheet, BiometricSheetError } from '$lib/server/biometric-sheet';
 import { applyBiometricDays } from '$lib/server/biometric-apply';
-import { logActivity } from '$lib/server/db/mongo';
+import { logActivity } from '$lib/server/db/store';
 import { requireCap } from '$lib/server/capabilities';
 
 const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;

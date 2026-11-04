@@ -11,7 +11,7 @@ import {
 	setAuthCookies
 } from '$lib/server/auth';
 import { requireUser } from '$lib/server/rbac';
-import { logActivity } from '$lib/server/db/mongo';
+import { logActivity } from '$lib/server/db/store';
 import { clerk, clerkAuthActive, mirrorPasswordToClerk, needsCurrentPassword } from '$lib/server/clerk';
 import { isNoLoginEmail } from '$lib/no-login';
 

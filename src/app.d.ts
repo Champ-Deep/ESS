@@ -20,7 +20,11 @@ declare global {
 			/** Champ Hub: the task open in the side sheet (shallow routing). */
 			task?: string;
 		}
-		// interface Platform {}
+		/** Cloudflare Workers (adapter-cloudflare); absent under Node. See wrangler.jsonc. */
+		interface Platform {
+			env: import('$lib/server/platform').CloudflareBindings;
+			ctx: { waitUntil(promise: Promise<unknown>): void; passThroughOnException(): void };
+		}
 	}
 }
 
