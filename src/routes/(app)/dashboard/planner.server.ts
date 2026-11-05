@@ -8,7 +8,7 @@
  * approval chain doesn't widen this — those requests are decided from the
  * Leave page.
  */
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import {
 	leaveApplications,
 	leaveTypes,
@@ -17,8 +17,9 @@ import {
 	holidayCalendars,
 	holidays
 } from '$lib/server/db/schema';
-import { and, eq, gte, inArray, lte, or } from 'drizzle-orm';
-import { getUsersWithProfilePicture } from '$lib/server/db/mongo';
+import { and, eq, gte, lte, or } from 'drizzle-orm';
+import { inArray } from '$lib/server/db/sql';
+import { getUsersWithProfilePicture } from '$lib/server/db/store';
 import { loadWeekOffFor } from '$lib/server/week-off';
 import type { SessionUser } from '$lib/server/auth';
 import { leaveReach } from '$lib/server/org-scope';

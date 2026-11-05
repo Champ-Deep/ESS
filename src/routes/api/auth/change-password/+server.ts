@@ -1,6 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { users } from '$lib/server/db/schema';
 import { eq } from 'drizzle-orm';
 import {
@@ -11,7 +11,7 @@ import {
 	setAuthCookies
 } from '$lib/server/auth';
 import { requireUser } from '$lib/server/rbac';
-import { logActivity } from '$lib/server/db/mongo';
+import { logActivity } from '$lib/server/db/store';
 import { clerk, clerkAuthActive, mirrorPasswordToClerk, needsCurrentPassword } from '$lib/server/clerk';
 import { isNoLoginEmail } from '$lib/no-login';
 

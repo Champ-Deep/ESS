@@ -2,7 +2,7 @@ import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { gateAdminPage } from '$lib/server/capabilities';
 import { loadChatPolicy, saveChatPolicy } from '$lib/server/chat/access';
-import { logActivity } from '$lib/server/db/mongo';
+import { logActivity } from '$lib/server/db/store';
 import type { ChatPolicy } from '$lib/chat/policy';
 
 /**

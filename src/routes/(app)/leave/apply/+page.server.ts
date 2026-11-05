@@ -1,7 +1,8 @@
 import type { PageServerLoad } from './$types';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { leaveTypes, leaveAllocations, leaveApplications, employeeProfiles } from '$lib/server/db/schema';
-import { and, eq, gte, inArray, lte, sql } from 'drizzle-orm';
+import { and, eq, gte, lte, sql } from 'drizzle-orm';
+import { inArray } from '$lib/server/db/sql';
 import { checkPinkLeaveEligibility, monthBounds } from '$lib/server/leave-eligibility';
 import { ensureLeaveAllocations } from '$lib/server/leave-accrual';
 import { managerFor } from '$lib/server/approval-chain';

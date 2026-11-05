@@ -1,4 +1,4 @@
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import {
 	attendanceDeviations,
 	chatChannels,
@@ -9,7 +9,8 @@ import {
 	leaveTypes,
 	users
 } from '$lib/server/db/schema';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
+import { inArray } from '$lib/server/db/sql';
 import type { SessionUser } from '$lib/server/auth';
 import { canReviewStage, managerFor, reportsToChief, assignedHrFor } from '$lib/server/approval-chain';
 import { ensureSystemFeed } from './access';
@@ -127,12 +128,12 @@ const DONE_BAD = new Set(['rejected']);
 export async function notifyDecision(kind: RequestKind, id: string, deciderId: string) {
 	const r = await requester(kind, id);
 	if (!r) return;
-	const holders = await db.execute(sql`
+	const holders = await db.all<{ userId: string }>(sql`
 		select distinct m.user_id as "userId" from chat_messages msg
 		join chat_members m on m.channel_id = msg.channel_id
 		where msg.card->>'type' = ${kind} and msg.card->>'id' = ${id}
 	`);
-	await publish((holders.rows as { userId: string }[]).map((h) => h.userId), { type: 'card.updated', cardType: kind, cardId: id });
+	await publish(holders.map((h) => h.userId), { type: 'card.updated', cardType: kind, cardId: id });
 
 	const decider = await nameOf(deciderId);
 	if (r.status === MID_STAGE[kind]) {

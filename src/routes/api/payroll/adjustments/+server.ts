@@ -2,9 +2,9 @@ import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { and, eq } from 'drizzle-orm';
 import { requireCap } from '$lib/server/capabilities';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { employeeProfiles, payrollAdjustments, users } from '$lib/server/db/schema';
-import { logActivity } from '$lib/server/db/mongo';
+import { logActivity } from '$lib/server/db/store';
 import { hiddenFrom } from '$lib/server/hidden-users';
 
 const ACTIONS = ['pay', 'stop', 'hold', 'sabbatical'];

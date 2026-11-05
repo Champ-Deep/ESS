@@ -1,4 +1,4 @@
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import {
 	attendance,
 	attendanceImports,
@@ -10,7 +10,8 @@ import { normalizeEmpCode } from '$lib/server/easytime-import';
 import { notHidden } from '$lib/server/hidden-users';
 import { lockAttendanceImports } from '$lib/server/easytime-ingest';
 import { addDays, instantFor, type ParsedBiometricDay } from '$lib/server/biometric-sheet';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
+import { inArray } from '$lib/server/db/sql';
 
 /**
  * Resolving and applying a manually uploaded biometric report.

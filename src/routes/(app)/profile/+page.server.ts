@@ -1,8 +1,8 @@
 import type { Actions, PageServerLoad } from './$types';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { employeeProfiles, users } from '$lib/server/db/schema';
 import { eq } from 'drizzle-orm';
-import { logActivity, getProfilePicture } from '$lib/server/db/mongo';
+import { logActivity, getProfilePicture } from '$lib/server/db/store';
 import { resolveManagers } from '$lib/server/managers';
 
 export const load: PageServerLoad = async ({ locals }) => {

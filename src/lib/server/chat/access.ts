@@ -1,6 +1,7 @@
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { chatChannels, chatMembers, employeeProfiles, users } from '$lib/server/db/schema';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
+import { chunksFor, inArray } from '$lib/server/db/sql';
 import type { SessionUser } from '$lib/server/auth';
 import { hasCap } from '$lib/server/capabilities';
 import { dmKey } from '$lib/chat/rules';
@@ -113,10 +114,13 @@ async function upsertChannel(values: typeof chatChannels.$inferInsert, memberIds
 		.onConflictDoUpdate({ target: chatChannels.uniqueKey, set: { archivedAt: null } })
 		.returning();
 	if (memberIds.length) {
-		await db
-			.insert(chatMembers)
-			.values(memberIds.map((userId) => ({ channelId: row.id, userId, addedBy: 'sync' })))
-			.onConflictDoNothing();
+		const [first, ...rest] = chunksFor(memberIds, 9).map((ids) =>
+			db
+				.insert(chatMembers)
+				.values(ids.map((userId) => ({ channelId: row.id, userId, addedBy: 'sync' })))
+				.onConflictDoNothing()
+		);
+		await db.batch([first, ...rest]);
 	}
 	return row;
 }

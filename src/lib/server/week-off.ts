@@ -6,10 +6,11 @@
  * "which roster is this person on right now?" and "is this date their day off?".
  */
 
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { weekOffRosters, weekOffAssignments, users } from '$lib/server/db/schema';
 import { hiddenFrom } from './hidden-users';
-import { eq, inArray, or, isNull, and } from 'drizzle-orm';
+import { eq, or, isNull, and } from 'drizzle-orm';
+import { inArray } from '$lib/server/db/sql';
 import {
 	makeWeekOffResolver,
 	assignmentOn,

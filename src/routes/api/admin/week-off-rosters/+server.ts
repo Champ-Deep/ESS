@@ -1,9 +1,9 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { requireRole } from '$lib/server/rbac';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { weekOffRosters, teams } from '$lib/server/db/schema';
-import { logActivity } from '$lib/server/db/mongo';
+import { logActivity } from '$lib/server/db/store';
 import { eq } from 'drizzle-orm';
 import { validateRosterInput } from '$lib/week-off';
 import { loadAssignableRosters } from '$lib/server/week-off';

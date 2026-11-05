@@ -1,0 +1,64 @@
+// Cloudflare Workers deployment for the Champ HR ESS portal.
+// Step-by-step setup: docs/cloudflare-deployment.md
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "champ-hr-ess",
+	"main": "cloudflare/worker.ts",
+	"compatibility_date": "2026-10-01",
+	"compatibility_flags": ["nodejs_compat"],
+
+	// SvelteKit's client bundle and static files (written by `npm run build`).
+	"assets": {
+		"directory": ".svelte-kit/cloudflare",
+		"binding": "ASSETS"
+	},
+
+	// SSR + argon2 password checks need more than the free plan's 10 ms.
+	"limits": { "cpu_ms": 30000 },
+
+	"observability": { "enabled": true },
+
+	// The database (D1, SQLite). Replace the id with the one printed by
+	// `npx wrangler d1 create champ-hr` (guide step 3). Tables come from
+	// migrations/ (`npm run d1:migrate`).
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "champ-hr",
+			"database_id": "REPLACE_WITH_D1_DATABASE_ID",
+			"migrations_dir": "migrations"
+		}
+	],
+
+	// Run the Worker close to the database: a page makes many small queries.
+	"placement": { "mode": "smart" },
+
+	// Uploaded files (what MongoDB used to hold): policy documents, profile
+	// pictures, announcement and chat attachments.
+	"r2_buckets": [{ "binding": "FILES", "bucket_name": "champ-hr-files" }],
+
+	// What Redis used to do: CHAT_HUB delivers live chat, KV_STORE holds sign-in
+	// sessions, login rate limits, presence and short-lived caches.
+	"durable_objects": {
+		"bindings": [
+			{ "name": "CHAT_HUB", "class_name": "ChatHub" },
+			{ "name": "KV_STORE", "class_name": "KvStore" }
+		]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["ChatHub", "KvStore"] }],
+
+	// One tick a minute drives every background job (src/routes/api/internal/cron).
+	"triggers": { "crons": ["* * * * *"] },
+
+	// Non-secret settings. Secrets (JWT_SECRET, RESEND_API_KEY, CLERK_SECRET_KEY, ...)
+	// are set with `npx wrangler secret put NAME` — see the guide.
+	"vars": {
+		"NODE_ENV": "production",
+		"ORIGIN": "https://champ-hr.com",
+		"PORTAL_URL": "https://champ-hr.com",
+		"AUTH_PROVIDER": "legacy",
+		"DEVICE_UTC_OFFSET": "+05:30",
+		"PROHANCE_UTC_OFFSET": "+05:30",
+		"PROHANCE_POLL_MINUTES": "0"
+	}
+}

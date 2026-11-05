@@ -1,6 +1,7 @@
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { employeeProfiles, users } from '$lib/server/db/schema';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
+import { inArray } from '$lib/server/db/sql';
 import { notHidden } from './hidden-users';
 import { formatManager, matchNameWithCodeTieBreak } from '$lib/server/name-match';
 

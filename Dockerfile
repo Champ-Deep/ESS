@@ -6,7 +6,7 @@ COPY package.json package-lock.json ./
 RUN npm ci
 
 COPY . .
-RUN npm run build
+RUN ADAPTER=node npm run build
 
 # --- Production stage ---
 FROM node:20-slim AS production
@@ -21,6 +21,7 @@ COPY --from=build /app/build ./build
 COPY --from=build /app/drizzle ./drizzle
 COPY --from=build /app/drizzle.config.ts ./drizzle.config.ts
 COPY --from=build /app/src/lib/server/db ./src/lib/server/db
+COPY --from=build /app/src/lib/server/password-hash.ts ./src/lib/server/password-hash.ts
 COPY start.sh ./start.sh
 RUN chmod +x ./start.sh
 

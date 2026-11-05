@@ -1,4 +1,4 @@
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { delegations, employeeProfiles, teams, users } from '$lib/server/db/schema';
 import { eq, isNull } from 'drizzle-orm';
 import type { SessionUser } from '$lib/server/auth';

@@ -1,8 +1,8 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { holidayCalendars, holidays } from '$lib/server/db/schema';
-import { logActivity } from '$lib/server/db/mongo';
+import { logActivity } from '$lib/server/db/store';
 import { eq } from 'drizzle-orm';
 import { requireCap } from '$lib/server/capabilities';
 
@@ -18,11 +18,11 @@ export const DELETE: RequestHandler = async (event) => {
 	const [existing] = await db.select().from(holidayCalendars).where(eq(holidayCalendars.id, calendarId)).limit(1);
 	if (!existing) throw error(404, 'Holiday calendar not found');
 
-	const removed = await db.transaction(async (tx) => {
-		const rows = await tx.delete(holidays).where(eq(holidays.calendarId, calendarId)).returning({ id: holidays.id });
-		await tx.delete(holidayCalendars).where(eq(holidayCalendars.id, calendarId));
-		return rows.length;
-	});
+	const [rows] = await db.batch([
+		db.delete(holidays).where(eq(holidays.calendarId, calendarId)).returning({ id: holidays.id }),
+		db.delete(holidayCalendars).where(eq(holidayCalendars.id, calendarId))
+	]);
+	const removed = rows.length;
 
 	await logActivity({
 		actorUserId: user.id,

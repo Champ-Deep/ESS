@@ -1,7 +1,7 @@
 import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { env } from '$env/dynamic/private';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { users } from '$lib/server/db/schema';
 import { and, asc, eq } from 'drizzle-orm';
 import { notHidden } from '$lib/server/hidden-users';

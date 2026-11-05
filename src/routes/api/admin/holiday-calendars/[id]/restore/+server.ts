@@ -1,8 +1,8 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { holidayCalendars } from '$lib/server/db/schema';
-import { logActivity } from '$lib/server/db/mongo';
+import { logActivity } from '$lib/server/db/store';
 import { and, eq, ne } from 'drizzle-orm';
 import { requireCap } from '$lib/server/capabilities';
 
@@ -18,8 +18,8 @@ export const POST: RequestHandler = async (event) => {
 	const [existing] = await db.select().from(holidayCalendars).where(eq(holidayCalendars.id, calendarId)).limit(1);
 	if (!existing) throw error(404, 'Holiday calendar not found');
 
-	const restored = await db.transaction(async (tx) => {
-		await tx
+	const [, [restored]] = await db.batch([
+		db
 			.update(holidayCalendars)
 			.set({ status: 'archived' })
 			.where(
@@ -28,14 +28,13 @@ export const POST: RequestHandler = async (event) => {
 					eq(holidayCalendars.year, existing.year),
 					ne(holidayCalendars.id, calendarId)
 				)
-			);
-		const [row] = await tx
+			),
+		db
 			.update(holidayCalendars)
 			.set({ status: 'published', publishedBy: user.id, publishedAt: new Date() })
 			.where(eq(holidayCalendars.id, calendarId))
-			.returning();
-		return row;
-	});
+			.returning()
+	]);
 
 	await logActivity({
 		actorUserId: user.id,

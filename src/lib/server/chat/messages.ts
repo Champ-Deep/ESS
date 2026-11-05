@@ -1,4 +1,4 @@
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import {
 	chatChannels,
 	chatMembers,
@@ -10,16 +10,18 @@ import {
 	chatTodos,
 	users
 } from '$lib/server/db/schema';
-import { and, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, lt, or, sql } from 'drizzle-orm';
+import { inArray } from '$lib/server/db/sql';
 import type { SessionUser } from '$lib/server/auth';
 import { hasCap } from '$lib/server/capabilities';
-import { getMongo, logActivity } from '$lib/server/db/mongo';
+import { getChatFile, insertChatFile, logActivity } from '$lib/server/db/store';
 import { detectSensitive, SENSITIVE_LABEL, type SensitiveKind } from '$lib/chat/rules';
 import { publish } from './bus';
 import { channelMemberIds, membership } from './access';
 import { deliverNotification } from './notify';
 import { resolveCards, type CardRef, type ResolvedCard } from './cards';
 import { notHidden } from '$lib/server/hidden-users';
+import { background } from '$lib/server/platform';
 
 export const MAX_BODY = 4000;
 
@@ -297,14 +299,14 @@ export async function sendMessage(viewer: SessionUser, input: SendInput): Promis
 				.map((m) => m.userId)
 		);
 		const title = c.kind === 'channel' ? `${sender} in #${c.name}` : c.kind === 'desk' ? `${sender} · Ask HR` : sender;
-		void deliverNotification(alertIds.filter((id) => !skip.has(id)), { title, body: snippet, url, kind: c.kind === 'channel' ? 'mention' : c.kind === 'desk' ? 'desk' : 'dm' }).catch(() => {});
+		background(deliverNotification(alertIds.filter((id) => !skip.has(id)), { title, body: snippet, url, kind: c.kind === 'channel' ? 'mention' : c.kind === 'desk' ? 'desk' : 'dm' }).catch(() => {}));
 	}
 
 	// "@Champ" anywhere in a person's message: Champ answers in the conversation.
 	if (!input.asSystem && /(^|\s)@champ\b/i.test(body) && c.kind !== 'system' && c.kind !== 'announcements') {
-		void import('$lib/server/champ/in-chat')
+		background(import('$lib/server/champ/in-chat')
 			.then((m) => m.answerInChannel(viewer, c.id, body, root?.id ?? null))
-			.catch((err) => console.error('[champ] in-chat failed:', err));
+			.catch((err) => console.error('[champ] in-chat failed:', err)));
 	}
 
 	const [view] = await serialize(viewer, [row]);
@@ -412,15 +414,18 @@ export async function listSaved(viewer: SessionUser) {
 export async function search(viewer: SessionUser, q: string) {
 	const text = q.trim().slice(0, 100);
 	if (text.length < 2) return [];
-	const res = await db.execute(sql`
+	// SQLite has no tsvector: every word must appear in the body (LIKE ignores ASCII case).
+	const words = text.replace(/[%_]/g, '').split(/\s+/).filter(Boolean).slice(0, 10);
+	if (words.length === 0) return [];
+	const res = await db.all<{ id: string }>(sql`
 		select msg.id from chat_messages msg
 		join chat_members m on m.channel_id = msg.channel_id and m.user_id = ${viewer.id}
 		where msg.deleted_at is null and msg.hidden_at is null
 			and (msg.visible_to is null or msg.visible_to = ${viewer.id})
-			and (to_tsvector('simple', msg.body) @@ plainto_tsquery('simple', ${text}) or msg.body ilike ${'%' + text.replace(/[%_]/g, '') + '%'})
+			and ${sql.join(words.map((w) => sql`msg.body like ${'%' + w + '%'}`), sql` and `)}
 		order by msg.created_at desc limit 40
 	`);
-	return getMessages(viewer, (res.rows as { id: string }[]).map((r) => r.id));
+	return getMessages(viewer, res.map((r) => r.id));
 }
 
 /* ---------- reports and moderation ---------- */
@@ -541,16 +546,8 @@ export async function storeFile(viewer: SessionUser, file: File) {
 	const buf = Buffer.from(await file.arrayBuffer());
 	const mime = sniffMime(buf, file.name);
 	if (!mime) return { ok: false as const, message: 'Share images, PDFs, Word, Excel, PowerPoint, CSV or text files' };
-	const mongo = await getMongo();
-	const res = await mongo.collection('chat_files').insertOne({
-		filename: file.name.slice(0, 200),
-		mimeType: mime,
-		fileBase64: buf.toString('base64'),
-		byteSize: file.size,
-		uploadedBy: viewer.id,
-		createdAt: new Date()
-	});
-	return { ok: true as const, file: { id: res.insertedId.toString(), name: file.name.slice(0, 200), mime, size: file.size } };
+	const id = await insertChatFile({ filename: file.name.slice(0, 200), mimeType: mime, bytes: buf, uploadedBy: viewer.id });
+	return { ok: true as const, file: { id, name: file.name.slice(0, 200), mime, size: file.size } };
 }
 
 /** A file, for someone in a conversation where it was shared. */
@@ -562,8 +559,5 @@ export async function readFile(viewer: SessionUser, fileId: string) {
 		.where(and(eq(chatMessages.fileId, fileId), isNull(chatMessages.deletedAt), isNull(chatMessages.hiddenAt)))
 		.limit(1);
 	if (!m) return null;
-	const { ObjectId } = await import('mongodb');
-	if (!ObjectId.isValid(fileId)) return null;
-	const mongo = await getMongo();
-	return mongo.collection('chat_files').findOne({ _id: new ObjectId(fileId) } as never) as Promise<{ filename: string; mimeType: string; fileBase64: string } | null>;
+	return getChatFile(fileId);
 }

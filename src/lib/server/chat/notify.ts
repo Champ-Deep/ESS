@@ -1,6 +1,6 @@
-import webpush from 'web-push';
+import { generateVAPIDKeys, sendNotification } from '$lib/server/webpush';
 import { env } from '$env/dynamic/private';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import {
 	appSettings,
 	chatCelebrations,
@@ -13,13 +13,15 @@ import {
 	pushSubscriptions,
 	users
 } from '$lib/server/db/schema';
-import { and, eq, inArray, isNull, lt, lte, sql } from 'drizzle-orm';
+import { and, eq, isNull, lt, lte, sql } from 'drizzle-orm';
+import { inArray } from '$lib/server/db/sql';
 import { isMailerConfigured, sendEmail } from '$lib/server/mailer';
-import { getMongo } from '$lib/server/db/mongo';
+import { deleteChatFiles } from '$lib/server/db/store';
 import { istDateKey } from '$lib/chat/rules';
-import { hasLocalStream, publish } from './bus';
+import { hasOpenStream, publish } from './bus';
 import { notHidden } from '$lib/server/hidden-users';
 import { onlineSet, workStatuses } from './presence';
+import { background } from '$lib/server/platform';
 
 /**
  * Getting someone's attention, fairly.
@@ -49,24 +51,24 @@ export async function vapidKeys() {
 		const [row] = await db.select().from(appSettings).where(eq(appSettings.key, 'vapid')).limit(1);
 		if (row) vapid = row.value as unknown as typeof vapid;
 		else {
-			const keys = webpush.generateVAPIDKeys();
+			const keys = await generateVAPIDKeys();
 			await db.insert(appSettings).values({ key: 'vapid', value: keys }).onConflictDoNothing();
 			const [again] = await db.select().from(appSettings).where(eq(appSettings.key, 'vapid')).limit(1);
 			vapid = (again?.value ?? keys) as unknown as typeof vapid;
 		}
 	}
-	webpush.setVapidDetails(`mailto:${env.RESEND_FROM?.match(/<(.+)>/)?.[1] ?? 'hr@champ-hr.com'}`, vapid!.publicKey, vapid!.privateKey);
 	return vapid!;
 }
 
 async function pushTo(userId: string, notice: Notice) {
 	const subs = await db.select().from(pushSubscriptions).where(eq(pushSubscriptions.userId, userId));
 	if (subs.length === 0) return;
-	await vapidKeys();
+	const keys = await vapidKeys();
+	const subject = `mailto:${env.RESEND_FROM?.match(/<(.+)>/)?.[1] ?? 'hr@champ-hr.com'}`;
 	const payload = JSON.stringify({ title: notice.title, body: notice.body.slice(0, 180), url: notice.url, tag: notice.kind });
 	for (const s of subs) {
 		try {
-			await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload, { TTL: 3600 });
+			await sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload, { vapid: keys, subject, TTL: 3600 });
 		} catch (err) {
 			const code = (err as { statusCode?: number }).statusCode;
 			// Gone or not found: the browser dropped this subscription.
@@ -91,8 +93,8 @@ export async function deliverNotification(userIds: string[], notice: Notice) {
 		await publish([id], { type: 'notify', ...notice, quiet, sound: pref?.sound ?? true });
 		if (quiet || pref?.push === false) continue;
 		// A tab open anywhere shows the pop-up itself; push is for a closed portal.
-		if (online.has(id) || hasLocalStream(id)) continue;
-		void pushTo(id, notice).catch(() => {});
+		if (online.has(id) || (await hasOpenStream(id))) continue;
+		background(pushTo(id, notice).catch(() => {}));
 	}
 }
 
@@ -105,10 +107,11 @@ export async function deliverNotification(userIds: string[], notice: Notice) {
  */
 export async function sendDigests(now = new Date()) {
 	if (!isMailerConfigured()) return;
-	const rows = await db.execute(sql`
+	const nowMs = now.getTime();
+	const items = await db.all<{ userId: string; channelId: string; kind: string; name: string; n: number; latest: number; preview: string }>(sql`
 		select m.user_id as "userId", m.channel_id as "channelId", c.kind, c.name,
-			count(*)::int as n, max(msg.created_at) as latest,
-			string_agg(coalesce(a.full_name, 'ESS') || ': ' || left(msg.body, 120), E'\n' order by msg.created_at desc) as preview
+			count(*) as n, max(msg.created_at) as latest,
+			group_concat(coalesce(a.full_name, 'ESS') || ': ' || substr(msg.body, 1, 120), char(10) order by msg.created_at desc) as preview
 		from chat_members m
 		join chat_channels c on c.id = m.channel_id
 		join chat_messages msg on msg.channel_id = m.channel_id
@@ -119,15 +122,14 @@ export async function sendDigests(now = new Date()) {
 			and msg.deleted_at is null and msg.thread_root_id is null
 			and (msg.author_id is null or msg.author_id <> m.user_id)
 			and (msg.visible_to is null or msg.visible_to = m.user_id)
-			and coalesce(p.email_digest, true)
-			and (m.muted_until is null or m.muted_until < now())
+			and coalesce(p.email_digest, 1) = 1
+			and (m.muted_until is null or m.muted_until < ${nowMs})
 			and (
-				(c.kind in ('dm', 'group', 'desk') and msg.created_at < now() - interval '2 hours')
-				or (c.kind = 'channel' and (m.user_id = any(msg.mentions) or msg.mentions_all) and msg.created_at < now() - interval '4 hours')
+				(c.kind in ('dm', 'group', 'desk') and msg.created_at < ${nowMs - 2 * 3_600_000})
+				or (c.kind = 'channel' and (exists (select 1 from json_each(msg.mentions) where value = m.user_id) or msg.mentions_all = 1) and msg.created_at < ${nowMs - 4 * 3_600_000})
 			)
 		group by m.user_id, m.channel_id, c.kind, c.name
 	`);
-	const items = rows.rows as { userId: string; channelId: string; kind: string; name: string; n: number; latest: Date; preview: string }[];
 	if (items.length === 0) return;
 	const work = await workStatuses(now);
 	const byUser = new Map<string, typeof items>();
@@ -155,9 +157,10 @@ ${list.map((x) => `<p style="margin:12px 0 4px"><b>${x.kind === 'channel' ? '#' 
 			text: `You have ${total} unread messages in Champ Chat. Open ${portal}/chat`
 		});
 		if (res.ok) {
-			for (const x of list) {
-				await db.update(chatMembers).set({ lastDigestAt: now }).where(and(eq(chatMembers.userId, person.id), eq(chatMembers.channelId, x.channelId)));
-			}
+			const marks = list.map((x) =>
+				db.update(chatMembers).set({ lastDigestAt: now }).where(and(eq(chatMembers.userId, person.id), eq(chatMembers.channelId, x.channelId)))
+			);
+			if (marks.length) await db.batch(marks as [(typeof marks)[0], ...typeof marks]);
 		}
 	}
 }
@@ -189,8 +192,8 @@ export async function postCelebrations(now = new Date()) {
 			id: users.id,
 			fullName: users.fullName,
 			teamId: users.teamId,
-			dob: sql<string | null>`coalesce(${employeeProfiles.dobActual}, ${employeeProfiles.dobDocuments})::text`,
-			doj: sql<string | null>`${employeeProfiles.dateOfJoining}::text`,
+			dob: sql<string | null>`coalesce(${employeeProfiles.dobActual}, ${employeeProfiles.dobDocuments})`,
+			doj: sql<string | null>`${employeeProfiles.dateOfJoining}`,
 			opted: chatPrefs.celebrations
 		})
 		.from(users)
@@ -233,9 +236,7 @@ export async function applyRetention(now = new Date()) {
 	if (old.length === 0) return 0;
 	const fileIds = old.map((o) => o.fileId).filter(Boolean) as string[];
 	if (fileIds.length) {
-		const { ObjectId } = await import('mongodb');
-		const mongo = await getMongo();
-		await mongo.collection('chat_files').deleteMany({ _id: { $in: fileIds.filter((f) => ObjectId.isValid(f)).map((f) => new ObjectId(f)) } } as never);
+		await deleteChatFiles(fileIds);
 	}
 	await db.delete(chatMessages).where(inArray(chatMessages.id, old.map((o) => o.id)));
 	return old.length;

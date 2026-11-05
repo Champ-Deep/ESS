@@ -1,6 +1,7 @@
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { chatChannels, chatMembers, employeeProfiles, shiftGroups, teams, users } from '$lib/server/db/schema';
-import { and, eq, inArray, isNull, notInArray, sql } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
+import { chunksFor, inArray, notInArray } from '$lib/server/db/sql';
 import { channelSlug } from '$lib/chat/rules';
 import { publish } from './bus';
 
@@ -77,10 +78,11 @@ async function applyFor(people: Person[], idByKey: Map<string, string>) {
 			if (!want.has(c.channelId) && (c.addedBy === 'sync' || !p.isActive)) toRemove.push(c);
 		}
 	}
-	if (toAdd.length) await db.insert(chatMembers).values(toAdd).onConflictDoNothing();
-	for (const r of toRemove) {
-		await db.delete(chatMembers).where(and(eq(chatMembers.channelId, r.channelId), eq(chatMembers.userId, r.userId)));
-	}
+	const writes = [
+		...chunksFor(toAdd, 9).map((rows) => db.insert(chatMembers).values(rows).onConflictDoNothing()),
+		...toRemove.map((r) => db.delete(chatMembers).where(and(eq(chatMembers.channelId, r.channelId), eq(chatMembers.userId, r.userId))))
+	];
+	if (writes.length) await db.batch(writes as [(typeof writes)[0], ...typeof writes]);
 	const touched = [...new Set([...toAdd, ...toRemove].map((x) => x.userId))];
 	if (touched.length) await publish(touched, { type: 'channels.changed' });
 }
@@ -90,7 +92,7 @@ async function loadPeople(ids?: string[]): Promise<Person[]> {
 		.select({ id: users.id, teamId: users.teamId, shiftGroupId: employeeProfiles.shiftGroupId, isActive: users.isActive })
 		.from(users)
 		.leftJoin(employeeProfiles, eq(employeeProfiles.userId, users.id))
-		.where(ids ? inArray(users.id, ids) : sql`true`);
+		.where(ids ? inArray(users.id, ids) : sql`1`);
 	return rows;
 }
 
@@ -110,9 +112,10 @@ export async function syncAll() {
 	// stay, read-only, so the other person's history still makes sense.
 	const inactive = people.filter((p) => !p.isActive).map((p) => p.id);
 	if (inactive.length) {
-		await db.execute(sql`
-			delete from chat_members m using chat_channels c
-			where m.channel_id = c.id and c.kind in ('channel', 'group') and m.user_id in ${inactive}
+		await db.run(sql`
+			delete from chat_members
+			where channel_id in (select id from chat_channels where kind in ('channel', 'group'))
+				and user_id in (select value from json_each(${JSON.stringify(inactive)}))
 		`);
 	}
 }

@@ -1,8 +1,8 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { weekOffRosters, weekOffAssignments, teams } from '$lib/server/db/schema';
-import { logActivity } from '$lib/server/db/mongo';
+import { logActivity } from '$lib/server/db/store';
 import { eq } from 'drizzle-orm';
 import { validateRosterInput } from '$lib/week-off';
 import { requireCap } from '$lib/server/capabilities';
@@ -81,10 +81,10 @@ export const DELETE: RequestHandler = async (event) => {
 		);
 	}
 
-	await db.transaction(async (tx) => {
-		if (assigned.length > 0) await tx.delete(weekOffAssignments).where(eq(weekOffAssignments.rosterId, id));
-		await tx.delete(weekOffRosters).where(eq(weekOffRosters.id, id));
-	});
+	await db.batch([
+		db.delete(weekOffAssignments).where(eq(weekOffAssignments.rosterId, id)),
+		db.delete(weekOffRosters).where(eq(weekOffRosters.id, id))
+	]);
 
 	await logActivity({
 		actorUserId: actor.id,

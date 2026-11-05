@@ -1,6 +1,5 @@
 import { SignJWT, jwtVerify } from 'jose';
-import { hash, verify } from '@node-rs/argon2';
-import { randomUUID } from 'node:crypto';
+import { hashPassword as argon2Hash, verifyPasswordHash } from './password-hash';
 import type { Cookies } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { storeRefreshToken, getUserIdForRefreshToken, revokeRefreshToken } from './db/redis';
@@ -24,8 +23,6 @@ export interface SessionUser {
 const ACCESS_TOKEN_TTL_SECONDS = 15 * 60; // 15 min
 const REFRESH_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
 
-const ARGON2_OPTS = { memoryCost: 19456, timeCost: 2, parallelism: 1 };
-
 function getAccessSecret() {
 	const secret = env.JWT_SECRET;
 	if (!secret) throw new Error('JWT_SECRET is not set');
@@ -39,12 +36,12 @@ function getRefreshSecret() {
 }
 
 export async function hashPassword(password: string): Promise<string> {
-	return hash(password, ARGON2_OPTS);
+	return argon2Hash(password);
 }
 
 export async function verifyPassword(hash: string, password: string): Promise<boolean> {
 	if (!hasPassword(hash)) return false;
-	return verify(hash, password);
+	return verifyPasswordHash(hash, password);
 }
 
 export async function issueAccessToken(user: SessionUser): Promise<string> {
@@ -63,7 +60,7 @@ export async function issueAccessToken(user: SessionUser): Promise<string> {
 }
 
 export async function issueRefreshToken(userId: string): Promise<string> {
-	const tokenId = randomUUID();
+	const tokenId = crypto.randomUUID();
 	await storeRefreshToken(userId, tokenId, REFRESH_TOKEN_TTL_SECONDS);
 	return new SignJWT({ tokenId })
 		.setProtectedHeader({ alg: 'HS256' })

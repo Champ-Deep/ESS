@@ -1,5 +1,5 @@
 import { env } from '$env/dynamic/private';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import {
 	announcementReads,
 	announcements,
@@ -8,8 +8,10 @@ import {
 	holidays,
 	users
 } from '$lib/server/db/schema';
-import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from 'drizzle-orm';
-import { sendEmail, isMailerConfigured } from '$lib/server/mailer';
+import { and, desc, eq, gte, isNull, lte, or, sql } from 'drizzle-orm';
+import { chunksFor, inArray } from '$lib/server/db/sql';
+import { sendEmailBatch, isMailerConfigured } from '$lib/server/mailer';
+import { background } from '$lib/server/platform';
 import { badgeFor, buildFeed, istDate, summaryOf, type Feed, type FeedHoliday, type FeedPost } from '$lib/announcements';
 import { notHidden } from '$lib/server/hidden-users';
 
@@ -43,8 +45,10 @@ export function inAudience(
 function audienceSql(v: Viewer) {
 	return or(
 		eq(announcements.audienceAll, true),
-		v.teamId ? sql`${v.teamId}::uuid = any(${announcements.audienceTeamIds})` : undefined,
-		v.shiftGroupId ? sql`${v.shiftGroupId}::uuid = any(${announcements.audienceShiftGroupIds})` : undefined
+		v.teamId ? sql`exists (select 1 from json_each(${announcements.audienceTeamIds}) where value = ${v.teamId})` : undefined,
+		v.shiftGroupId
+			? sql`exists (select 1 from json_each(${announcements.audienceShiftGroupIds}) where value = ${v.shiftGroupId})`
+			: undefined
 	);
 }
 
@@ -172,19 +176,21 @@ export async function recordRead(announcementId: string, userId: string, action:
 			// First read time is kept; confirm/dismiss are stamped once.
 			set:
 				action === 'ack'
-					? { acknowledgedAt: sql`coalesce(${announcementReads.acknowledgedAt}, now())` }
+					? { acknowledgedAt: sql`coalesce(${announcementReads.acknowledgedAt}, ${now.getTime()})` }
 					: action === 'dismiss'
-						? { dismissedAt: sql`coalesce(${announcementReads.dismissedAt}, now())` }
+						? { dismissedAt: sql`coalesce(${announcementReads.dismissedAt}, ${now.getTime()})` }
 						: { readAt: sql`${announcementReads.readAt}` }
 		});
 }
 
 export async function recordReadMany(ids: string[], userId: string) {
 	if (ids.length === 0) return;
-	await db
-		.insert(announcementReads)
-		.values(ids.map((announcementId) => ({ announcementId, userId })))
-		.onConflictDoNothing();
+	// D1 caps bound values per query, so the rows go in chunks, in one batch.
+	const [first, ...rest] = chunksFor(
+		ids.map((announcementId) => ({ announcementId, userId })),
+		5
+	).map((chunk) => db.insert(announcementReads).values(chunk).onConflictDoNothing());
+	await db.batch([first, ...rest]);
 }
 
 /* ---------- HR side ---------- */
@@ -210,8 +216,8 @@ export async function loadAdminList() {
 	const counts = db
 		.select({
 			announcementId: announcementReads.announcementId,
-			reads: sql<number>`count(*)::int`.as('reads'),
-			acks: sql<number>`count(${announcementReads.acknowledgedAt})::int`.as('acks')
+			reads: sql<number>`count(*)`.as('reads'),
+			acks: sql<number>`count(${announcementReads.acknowledgedAt})`.as('acks')
 		})
 		.from(announcementReads)
 		.innerJoin(users, eq(users.id, announcementReads.userId))
@@ -278,20 +284,12 @@ ${paragraphs.map((p) => `<p>${escapeHtml(p).replace(/\n/g, '<br>')}</p>`).join('
 	return { subject, html, text };
 }
 
-const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-/** Sends one message per person, paced to stay inside the provider's rate limit. */
+/** One message per person, sent through the batch endpoint 100 at a time. */
 async function sendToAll(post: Announcement, recipients: Member[], reminder: boolean) {
 	const mail = buildEmail(post, reminder);
-	let sent = 0;
-	let failed = 0;
-	for (const r of recipients) {
-		const res = await sendEmail({ to: r.email, ...mail });
-		if (res.ok) sent++;
-		else failed++;
-		await pause(550);
-	}
-	return { sent, failed };
+	const results = await sendEmailBatch(recipients.map((r) => ({ to: r.email, ...mail })));
+	const sent = results.filter((r) => r.ok).length;
+	return { sent, failed: results.length - sent };
 }
 
 /**
@@ -329,8 +327,8 @@ export async function sendConfirmationReminder(id: string) {
 	const members = await loadMembers();
 	const pendingIds = new Set(found.pending.map((p) => p.id));
 	const recipients = members.filter((m) => pendingIds.has(m.id));
-	// Paced sending takes a while for a few hundred people; the page does not wait.
-	void sendToAll(found.post, recipients, true).catch((err) => console.error('[announcements] reminder failed:', err));
+	// Sending takes a few seconds for a few hundred people; the page does not wait.
+	background(sendToAll(found.post, recipients, true));
 	return { ok: true as const, count: recipients.length };
 }
 
@@ -375,7 +373,7 @@ export async function loadStaleConfirmations(now = new Date()) {
 	const [members, acks] = await Promise.all([
 		loadMembers(),
 		db
-			.select({ id: announcementReads.announcementId, n: sql<number>`count(${announcementReads.acknowledgedAt})::int` })
+			.select({ id: announcementReads.announcementId, n: sql<number>`count(${announcementReads.acknowledgedAt})` })
 			.from(announcementReads)
 			.innerJoin(users, eq(users.id, announcementReads.userId))
 			.where(and(inArray(announcementReads.announcementId, rows.map((r) => r.id)), notHidden))

@@ -1,9 +1,9 @@
 import type { PageServerLoad } from './$types';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { shiftGroups, holidayCalendars, holidays, leaveTypes } from '$lib/server/db/schema';
 import { desc } from 'drizzle-orm';
 import { gateAdminPage } from '$lib/server/capabilities';
-import { listPolicyDocuments } from '$lib/server/db/mongo';
+import { listPolicyDocuments } from '$lib/server/db/store';
 
 export const load: PageServerLoad = async ({ locals }) => {
 	gateAdminPage(locals, ['policies.publish']);

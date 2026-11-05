@@ -1,6 +1,7 @@
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { leaveTypes, leaveAllocations, employeeProfiles } from '$lib/server/db/schema';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, getTableColumns } from 'drizzle-orm';
+import { chunksFor, inArray } from '$lib/server/db/sql';
 
 /**
  * Policy-driven leave balances (see "leave polcies.pdf", published through
@@ -101,8 +102,8 @@ export function accrualSinceBaseline(
 
 /**
  * Ensures every listed user has this year's allocations matching the
- * published policy. Batched: three reads plus one write per row that
- * actually changed, so roster-sized calls stay cheap.
+ * published policy. Batched: three reads, then every row that actually
+ * changed is written in D1 batches, so roster-sized calls stay cheap.
  */
 export async function ensureLeaveAllocations(userIds: string[]): Promise<void> {
 	if (userIds.length === 0) return;
@@ -142,6 +143,8 @@ export async function ensureLeaveAllocations(userIds: string[]): Promise<void> {
 		.from(leaveAllocations)
 		.where(and(inArray(leaveAllocations.userId, userIds), eq(leaveAllocations.year, year)));
 	const existingByKey = new Map(existing.map((a) => [`${a.userId}:${a.leaveTypeId}`, a]));
+	const updates: { id: string; allocatedDays: string }[] = [];
+	const inserts: (typeof leaveAllocations.$inferInsert)[] = [];
 
 	for (const userId of userIds) {
 		const profile = profileByUser.get(userId);
@@ -197,18 +200,13 @@ export async function ensureLeaveAllocations(userIds: string[]): Promise<void> {
 				const target = round2(
 					baseline + accrualSinceBaseline(row.hrSetAt, startMonth, year, currentMonth, perMonth)
 				);
-				if (Number(row.allocatedDays) !== target) {
-					await db
-						.update(leaveAllocations)
-						.set({ allocatedDays: String(target) })
-						.where(eq(leaveAllocations.id, row.id));
-				}
+				if (Number(row.allocatedDays) !== target) updates.push({ id: row.id, allocatedDays: String(target) });
 				continue;
 			}
 
 			if (!row) {
 				if (accrued > 0) {
-					await db.insert(leaveAllocations).values({
+					inserts.push({
 						userId,
 						leaveTypeId: type.id,
 						year,
@@ -217,11 +215,17 @@ export async function ensureLeaveAllocations(userIds: string[]): Promise<void> {
 					});
 				}
 			} else if (Number(row.allocatedDays) !== accrued) {
-				await db
-					.update(leaveAllocations)
-					.set({ allocatedDays: String(accrued) })
-					.where(eq(leaveAllocations.id, row.id));
+				updates.push({ id: row.id, allocatedDays: String(accrued) });
 			}
 		}
+	}
+
+	const writes = [
+		...chunksFor(inserts, Object.keys(getTableColumns(leaveAllocations)).length).map((rows) => db.insert(leaveAllocations).values(rows)),
+		...updates.map((u) => db.update(leaveAllocations).set({ allocatedDays: u.allocatedDays }).where(eq(leaveAllocations.id, u.id)))
+	];
+	for (let i = 0; i < writes.length; i += 200) {
+		const slice = writes.slice(i, i + 200);
+		await db.batch(slice as [(typeof slice)[0], ...typeof slice]);
 	}
 }

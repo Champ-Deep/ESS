@@ -1,6 +1,6 @@
 import { fail } from '@sveltejs/kit';
 import type { RequestEvent } from '@sveltejs/kit';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { announcementReads, announcements, shiftGroups, teams } from '$lib/server/db/schema';
 import { and, eq, isNull } from 'drizzle-orm';
 import {
@@ -10,9 +10,10 @@ import {
 	loadMembers,
 	sendConfirmationReminder
 } from '$lib/server/announcements';
-import { insertAnnouncementFile } from '$lib/server/db/mongo';
+import { insertAnnouncementFile } from '$lib/server/db/store';
 import { isMailerConfigured } from '$lib/server/mailer';
 import { hasCap } from '$lib/server/capabilities';
+import { background } from '$lib/server/platform';
 
 /**
  * Posting and managing announcements — the composer and "Posted" list shown
@@ -197,7 +198,7 @@ export const announcementActions = {
 
 		// Sending takes a while for a few hundred people; the page does not wait.
 		if (intent === 'publish' && fields.emailCopy) {
-			void dispatchDueEmails().catch((err) => console.error('[announcements] email dispatch failed:', err));
+			background(dispatchDueEmails().catch((err) => console.error('[announcements] email dispatch failed:', err)));
 		}
 
 		const scheduled = intent === 'publish' && when === 'later';

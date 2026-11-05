@@ -1,9 +1,10 @@
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { chatChannels, chatMessages, employeeProfiles, meetings, taskEvents, taskSubtasks, tasks, users } from '$lib/server/db/schema';
-import { and, asc, desc, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, isNull, or, sql } from 'drizzle-orm';
+import { inArray } from '$lib/server/db/sql';
 import type { SessionUser } from '$lib/server/auth';
 import { hasCap } from '$lib/server/capabilities';
-import { logActivity } from '$lib/server/db/mongo';
+import { logActivity } from '$lib/server/db/store';
 import { publish } from '$lib/server/chat/bus';
 import { postToFeed } from '$lib/server/chat/cards';
 import { membership } from '$lib/server/chat/access';
@@ -143,7 +144,7 @@ export async function serialize(viewer: SessionUser, rows: Row[], reach?: Reach)
 	const channelIds = [...new Set(rows.map((x) => x.sourceChannelId).filter(Boolean) as string[])];
 	const [subs, mts, chans] = await Promise.all([
 		db
-			.select({ taskId: taskSubtasks.taskId, total: sql<number>`count(*)::int`, done: sql<number>`count(*) filter (where ${taskSubtasks.done})::int` })
+			.select({ taskId: taskSubtasks.taskId, total: sql<number>`count(*)`, done: sql<number>`count(*) filter (where ${taskSubtasks.done})` })
 			.from(taskSubtasks)
 			.where(inArray(taskSubtasks.taskId, ids))
 			.groupBy(taskSubtasks.taskId),
@@ -743,7 +744,7 @@ export async function searchTasks(viewer: SessionUser, q: string, limit = 8): Pr
 	const rows = await db
 		.select()
 		.from(tasks)
-		.where(and(sql`${tasks.title} ilike ${'%' + text.replace(/[%_]/g, '') + '%'}`, scope))
+		.where(and(sql`${tasks.title} like ${'%' + text.replace(/[%_]/g, '') + '%'}`, scope))
 		.orderBy(desc(tasks.updatedAt))
 		.limit(limit);
 	return serialize(viewer, rows, reach);

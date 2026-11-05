@@ -1,6 +1,7 @@
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { chatChannels, chatMembers, users } from '$lib/server/db/schema';
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
+import { chunksFor, inArray } from '$lib/server/db/sql';
 import type { SessionUser } from '$lib/server/auth';
 import { hasCap } from '$lib/server/capabilities';
 import { loadBadge } from '$lib/server/announcements';
@@ -73,10 +74,10 @@ export async function sidebarFor(user: SessionUser): Promise<{ channels: Sidebar
 
 	const ids = rows.map((r) => r.c.id);
 	const counts = ids.length
-		? await db.execute(sql`
+		? await db.all<{ id: string; unread: number; mentions: number }>(sql`
 			select m.channel_id as id,
-				count(*) filter (where true)::int as unread,
-				count(*) filter (where ${user.id}::uuid = any(msg.mentions) or msg.mentions_all)::int as mentions
+				count(*) as unread,
+				count(*) filter (where exists (select 1 from json_each(msg.mentions) where value = ${user.id}) or msg.mentions_all) as mentions
 			from chat_members m
 			join chat_messages msg on msg.channel_id = m.channel_id
 			where m.user_id = ${user.id}
@@ -87,10 +88,8 @@ export async function sidebarFor(user: SessionUser): Promise<{ channels: Sidebar
 				and (msg.visible_to is null or msg.visible_to = ${user.id})
 			group by m.channel_id
 		`)
-		: { rows: [] };
-	const countBy = new Map(
-		(counts.rows as { id: string; unread: number; mentions: number }[]).map((r) => [r.id, r])
-	);
+		: [];
+	const countBy = new Map(counts.map((r) => [r.id, r]));
 
 	// Names of the other people in DMs and groups, in one query.
 	const convIds = rows.filter((r) => r.c.kind === 'dm' || r.c.kind === 'group').map((r) => r.c.id);
@@ -153,7 +152,7 @@ export async function markRead(user: SessionUser, channelId: string, at = new Da
 	await db
 		.update(chatMembers)
 		.set({ lastReadAt: at })
-		.where(and(eq(chatMembers.channelId, channelId), eq(chatMembers.userId, user.id), sql`${chatMembers.lastReadAt} < ${at}`));
+		.where(and(eq(chatMembers.channelId, channelId), eq(chatMembers.userId, user.id), sql`${chatMembers.lastReadAt} < ${at.getTime()}`));
 	const [c] = await db.select({ kind: chatChannels.kind }).from(chatChannels).where(eq(chatChannels.id, channelId)).limit(1);
 	// Your other tabs clear the badge; in a DM the other person sees "Seen".
 	const others = c?.kind === 'dm' ? (await db.select({ userId: chatMembers.userId }).from(chatMembers).where(eq(chatMembers.channelId, channelId))).map((r) => r.userId) : [user.id];
@@ -161,6 +160,13 @@ export async function markRead(user: SessionUser, channelId: string, at = new Da
 }
 
 type Fail = { ok: false; message: string };
+
+/** Add members, a few rows per statement: D1 binds at most 100 values per query (chat_members has 9 columns). */
+async function insertMembers(rows: (typeof chatMembers.$inferInsert)[]) {
+	if (rows.length === 0) return;
+	const [first, ...rest] = chunksFor(rows, 9).map((chunk) => db.insert(chatMembers).values(chunk).onConflictDoNothing());
+	await db.batch([first, ...rest]);
+}
 
 export async function openDm(user: SessionUser, targetId: string): Promise<{ ok: true; id: string } | Fail> {
 	const [me, target] = [(await loadPeople([user.id]))[0], (await loadPeople([targetId]))[0]];
@@ -189,7 +195,7 @@ export async function createGroup(user: SessionUser, memberIds: string[], groupN
 	if (blocked.length) return { ok: false, message: `You cannot message ${blocked.map((b) => b.fullName).join(', ')} directly.` };
 	const name = groupName.trim().slice(0, 60) || everyone.filter((p) => p.id !== user.id).map((p) => p.fullName.split(' ')[0]).join(', ');
 	const [row] = await db.insert(chatChannels).values({ kind: 'group', name, isPrivate: true, createdBy: user.id }).returning();
-	await db.insert(chatMembers).values([user.id, ...ids].map((userId) => ({ channelId: row.id, userId, role: userId === user.id ? 'admin' : 'member' })));
+	await insertMembers([user.id, ...ids].map((userId) => ({ channelId: row.id, userId, role: userId === user.id ? 'admin' : 'member' })));
 	await announceChannelChange(row.id);
 	return { ok: true, id: row.id };
 }
@@ -228,22 +234,22 @@ export async function createChannel(
 			createdBy: user.id
 		})
 		.returning();
-	await db.insert(chatMembers).values(memberIds.map((userId) => ({ channelId: row.id, userId, role: userId === user.id ? 'admin' : 'member' }))).onConflictDoNothing();
+	await insertMembers(memberIds.map((userId) => ({ channelId: row.id, userId, role: userId === user.id ? 'admin' : 'member' })));
 	await announceChannelChange(row.id);
 	return { ok: true, id: row.id };
 }
 
 /** Public channels you are not in yet, to browse and join. */
 export async function browseChannels(user: SessionUser) {
-	return db.execute(sql`
+	return db.all<{ id: string; name: string; topic: string; teamId: string | null; members: number }>(sql`
 		select c.id, c.name, c.topic, c.team_id as "teamId",
-			(select count(*)::int from chat_members x join users u on u.id = x.user_id where x.channel_id = c.id and u.hidden = false) as members
+			(select count(*) from chat_members x join users u on u.id = x.user_id where x.channel_id = c.id and u.hidden = 0) as members
 		from chat_channels c
-		where c.kind = 'channel' and c.is_private = false and c.archived_at is null and c.source = 'manual'
+		where c.kind = 'channel' and c.is_private = 0 and c.archived_at is null and c.source = 'manual'
 			and not exists (select 1 from chat_members m where m.channel_id = c.id and m.user_id = ${user.id})
 			and (c.team_id is null or c.team_id = ${user.teamId})
 		order by c.name
-	`).then((r) => r.rows as { id: string; name: string; topic: string; teamId: string | null; members: number }[]);
+	`);
 }
 
 export async function joinChannel(user: SessionUser, channelId: string): Promise<{ ok: true } | Fail> {
@@ -270,7 +276,7 @@ export async function addMembers(user: SessionUser, channelId: string, ids: stri
 	if (!ok) return { ok: false, message: c.source !== 'manual' ? 'Members of this channel follow the roster' : 'Only the channel creator or HR can add people' };
 	let people = (await loadPeople(ids)).filter((p) => p.isActive && !p.hidden);
 	if (c.teamId) people = people.filter((p) => p.teamId === c.teamId);
-	if (people.length) await db.insert(chatMembers).values(people.map((p) => ({ channelId, userId: p.id }))).onConflictDoNothing();
+	await insertMembers(people.map((p) => ({ channelId, userId: p.id })));
 	await announceChannelChange(channelId);
 	return { ok: true };
 }

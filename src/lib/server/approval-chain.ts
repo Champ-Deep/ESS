@@ -21,9 +21,10 @@
  * never falls through to a team lead the way an unlinked manager does.
  */
 
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { users, employeeProfiles, teams } from '$lib/server/db/schema';
-import { and, eq, inArray, isNull, or } from 'drizzle-orm';
+import { and, eq, isNull, or } from 'drizzle-orm';
+import { inArray } from '$lib/server/db/sql';
 import { actingForManager, loadOrgScope, todayIst } from '$lib/server/org-scope';
 import { activeDelegations, resolveTeamLead } from '$lib/org-scope';
 import { notHidden } from '$lib/server/hidden-users';

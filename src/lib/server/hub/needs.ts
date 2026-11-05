@@ -1,6 +1,7 @@
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { attendanceDeviations, chatChannels, chatMembers, chatMessages, compOffCredits, hubDismissals, leaveApplications, tasks, users } from '$lib/server/db/schema';
-import { and, asc, desc, eq, gt, gte, inArray, isNull, lte, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, gte, isNull, lte, or, sql } from 'drizzle-orm';
+import { inArray } from '$lib/server/db/sql';
 import type { SessionUser } from '$lib/server/auth';
 import { reviewableUserIds } from '$lib/server/approval-chain';
 import { resolveCards, type RequestKind } from '$lib/server/chat/cards';
@@ -33,7 +34,7 @@ async function approvals(user: SessionUser): Promise<NeedItem[]> {
 	const [mgr, hr] = await Promise.all([reviewableUserIds(user, 'manager'), reviewableUserIds(user, 'hr')]);
 	if (mgr.length === 0 && hr.length === 0) return [];
 	const refs: { type: RequestKind; id: string; at: Date }[] = [];
-	const scoped = <T>(ids: string[], col: T) => (ids.length ? inArray(col as never, ids) : sql`false`);
+	const scoped = <T>(ids: string[], col: T) => (ids.length ? inArray(col as never, ids) : sql`0`);
 
 	const leave = await db
 		.select({ id: leaveApplications.id, at: leaveApplications.createdAt })
@@ -83,12 +84,12 @@ async function mentions(user: SessionUser): Promise<NeedItem[]> {
 		.leftJoin(users, eq(users.id, chatMessages.authorId))
 		.where(
 			and(
-				or(sql`${user.id}::uuid = any(${chatMessages.mentions})`, eq(chatMessages.mentionsAll, true)),
+				or(sql`exists (select 1 from json_each(${chatMessages.mentions}) where value = ${user.id})`, eq(chatMessages.mentionsAll, true)),
 				gt(chatMessages.createdAt, chatMembers.lastReadAt),
 				gte(chatMessages.createdAt, since),
 				isNull(chatMessages.deletedAt),
 				isNull(chatMessages.hiddenAt),
-				sql`${chatMessages.authorId} is distinct from ${user.id}::uuid`,
+				sql`${chatMessages.authorId} is not ${user.id}`,
 				or(isNull(chatMessages.visibleTo), eq(chatMessages.visibleTo, user.id))
 			)
 		)
@@ -199,15 +200,17 @@ async function unreadChats(user: SessionUser): Promise<ChatPreview[]> {
 		.sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt))
 		.slice(0, 5);
 	if (unread.length === 0) return [];
-	const last = await db.execute(sql`
-		select distinct on (msg.channel_id) msg.channel_id as "channelId", msg.body, u.full_name as "author"
-		from chat_messages msg left join users u on u.id = msg.author_id
-		where msg.channel_id in (${sql.join(unread.map((c) => sql`${c.id}::uuid`), sql`, `)})
-			and msg.thread_root_id is null and msg.deleted_at is null and msg.hidden_at is null
-			and (msg.visible_to is null or msg.visible_to = ${user.id})
-		order by msg.channel_id, msg.created_at desc
+	const last = await db.all<{ channelId: string; body: string; author: string | null }>(sql`
+		select "channelId", body, author from (
+			select msg.channel_id as "channelId", msg.body, u.full_name as "author",
+				row_number() over (partition by msg.channel_id order by msg.created_at desc) as rn
+			from chat_messages msg left join users u on u.id = msg.author_id
+			where msg.channel_id in (select value from json_each(${JSON.stringify(unread.map((c) => c.id))}))
+				and msg.thread_root_id is null and msg.deleted_at is null and msg.hidden_at is null
+				and (msg.visible_to is null or msg.visible_to = ${user.id})
+		) where rn = 1
 	`);
-	const by = new Map((last.rows as { channelId: string; body: string; author: string | null }[]).map((r) => [r.channelId, r]));
+	const by = new Map(last.map((r) => [r.channelId, r]));
 	return unread.map((c) => {
 		const l = by.get(c.id);
 		const name =

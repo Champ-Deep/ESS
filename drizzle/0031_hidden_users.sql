@@ -1,1 +1,0 @@
-ALTER TABLE "users" ADD COLUMN "hidden" boolean DEFAULT false NOT NULL;

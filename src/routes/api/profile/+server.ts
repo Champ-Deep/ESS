@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { employeeProfiles, users } from '$lib/server/db/schema';
 import { requireUser } from '$lib/server/rbac';
 import { eq } from 'drizzle-orm';

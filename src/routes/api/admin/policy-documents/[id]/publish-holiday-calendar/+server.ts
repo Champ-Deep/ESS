@@ -1,9 +1,10 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { shiftGroups, holidayCalendars, holidays } from '$lib/server/db/schema';
-import { updatePolicyDocument, logActivity } from '$lib/server/db/mongo';
+import { updatePolicyDocument, logActivity } from '$lib/server/db/store';
 import { eq, and, desc } from 'drizzle-orm';
+import { chunksFor } from '$lib/server/db/sql';
 import { requireCap } from '$lib/server/capabilities';
 
 interface PublishTable {
@@ -62,15 +63,22 @@ export const POST: RequestHandler = async (event) => {
 
 		const nextVersion = existing ? existing.version + 1 : 1;
 
-		// Archive any prior published calendar for this shift group + year
-		await db
-			.update(holidayCalendars)
-			.set({ status: 'archived' })
-			.where(and(eq(holidayCalendars.shiftGroupId, group.id), eq(holidayCalendars.year, year)));
-
-		const [calendar] = await db
-			.insert(holidayCalendars)
-			.values({
+		// Archive any prior published calendar for this shift group + year, then
+		// add the new version and its holidays, in one batch (atomic on D1).
+		const calendar = { id: crypto.randomUUID() };
+		const holidayRows = table.holidays.map((h) => ({
+			calendarId: calendar.id,
+			date: h.date,
+			name: h.name,
+			type: h.type ?? 'PUBLIC'
+		}));
+		await db.batch([
+			db
+				.update(holidayCalendars)
+				.set({ status: 'archived' })
+				.where(and(eq(holidayCalendars.shiftGroupId, group.id), eq(holidayCalendars.year, year))),
+			db.insert(holidayCalendars).values({
+				id: calendar.id,
 				shiftGroupId: group.id,
 				year,
 				version: nextVersion,
@@ -79,19 +87,10 @@ export const POST: RequestHandler = async (event) => {
 				sourceDocumentId: documentId,
 				publishedBy: user.id,
 				publishedAt: new Date()
-			})
-			.returning();
-
-		if (table.holidays.length > 0) {
-			await db.insert(holidays).values(
-				table.holidays.map((h) => ({
-					calendarId: calendar.id,
-					date: h.date,
-					name: h.name,
-					type: h.type ?? 'PUBLIC'
-				}))
-			);
-		}
+			}),
+			// D1 binds at most 100 values per statement: 5 columns per holiday.
+			...chunksFor(holidayRows, 5).map((chunk) => db.insert(holidays).values(chunk))
+		]);
 
 		publishedCalendars.push({ shiftGroupKey: table.shift_group_key, calendarId: calendar.id, version: nextVersion });
 	}

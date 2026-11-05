@@ -1,6 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { env } from '$env/dynamic/private';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { attendanceImportTokens } from '$lib/server/db/schema';
 import { eq, isNull } from 'drizzle-orm';
 

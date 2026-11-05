@@ -1,9 +1,10 @@
 import { env } from '$env/dynamic/private';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { prohanceDays, prohanceSyncs, employeeProfiles, users } from '$lib/server/db/schema';
 import { normalizeEmpCode } from '$lib/server/easytime-import';
 import { notHidden } from '$lib/server/hidden-users';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
+import { inArray } from '$lib/server/db/sql';
 
 /**
  * ProHance Web Services API client + sync (see "ProHance Web Services API
@@ -266,6 +267,9 @@ export async function fetchComprehensiveReport(
 	return rows;
 }
 
+/** Statements per D1 batch. */
+const BATCH = 200;
+
 /** Upserts report rows and resolves employee codes to portal users. */
 async function applyRows(rows: ProhanceDayRow[], syncId: string) {
 	let matched = 0;
@@ -299,7 +303,9 @@ async function applyRows(rows: ProhanceDayRow[], syncId: string) {
 		byLocalpart.set(lp, byLocalpart.has(lp) ? null : u.id); // null = ambiguous
 	}
 
-	for (const row of rows) {
+	// One upsert per row, sent in batches: a window is thousands of rows, more
+	// than D1 allows as separate queries in one invocation.
+	const upserts = rows.map((row) => {
 		const userId =
 			userByCode.get(row.empCode) ??
 			(row.consoleLoginId ? byLocalpart.get(localpart(row.consoleLoginId)) : null) ??
@@ -308,7 +314,7 @@ async function applyRows(rows: ProhanceDayRow[], syncId: string) {
 		if (userId) matched += 1;
 		else unmatched += 1;
 
-		await db
+		return db
 			.insert(prohanceDays)
 			.values({
 				syncId,
@@ -343,9 +349,13 @@ async function applyRows(rows: ProhanceDayRow[], syncId: string) {
 					dayType: row.dayType,
 					raw: row.raw,
 					matchedUserId: userId,
-					updatedAt: sql`now()`
+					updatedAt: new Date()
 				}
 			});
+	});
+	for (let i = 0; i < upserts.length; i += BATCH) {
+		const [first, ...rest] = upserts.slice(i, i + BATCH);
+		await db.batch([first, ...rest]);
 	}
 	return { matched, unmatched };
 }
@@ -468,6 +478,7 @@ async function rematchUnmatchedRows(): Promise<number> {
 	}
 
 	let rematched = 0;
+	const updates = [];
 	for (const o of orphans) {
 		const userId =
 			userByCode.get(o.empCode) ??
@@ -475,12 +486,17 @@ async function rematchUnmatchedRows(): Promise<number> {
 			byLocalpart.get(o.empCode.toLowerCase()) ??
 			null;
 		if (!userId) continue;
-		const updated = await db
-			.update(prohanceDays)
-			.set({ matchedUserId: userId, updatedAt: sql`now()` })
-			.where(and(eq(prohanceDays.empCode, o.empCode), sql`${prohanceDays.matchedUserId} is null`))
-			.returning({ id: prohanceDays.id });
-		rematched += updated.length;
+		updates.push(
+			db
+				.update(prohanceDays)
+				.set({ matchedUserId: userId, updatedAt: new Date() })
+				.where(and(eq(prohanceDays.empCode, o.empCode), sql`${prohanceDays.matchedUserId} is null`))
+				.returning({ id: prohanceDays.id })
+		);
+	}
+	for (let i = 0; i < updates.length; i += BATCH) {
+		const [first, ...rest] = updates.slice(i, i + BATCH);
+		for (const updated of await db.batch([first, ...rest])) rematched += updated.length;
 	}
 	return rematched;
 }
@@ -507,7 +523,7 @@ async function doSync(trigger: 'poll' | 'manual', window?: SyncWindowOverride): 
 				rowCount: rows.length,
 				matchedCount: matched,
 				unmatchedCount: unmatched,
-				finishedAt: sql`now()`
+				finishedAt: new Date()
 			})
 			.where(eq(prohanceSyncs.id, syncRow.id));
 		return {
@@ -523,7 +539,7 @@ async function doSync(trigger: 'poll' | 'manual', window?: SyncWindowOverride): 
 		const message = err instanceof Error ? err.message : String(err);
 		await db
 			.update(prohanceSyncs)
-			.set({ status: 'error', error: message.slice(0, 2000), finishedAt: sql`now()` })
+			.set({ status: 'error', error: message.slice(0, 2000), finishedAt: new Date() })
 			.where(eq(prohanceSyncs.id, syncRow.id));
 		throw err;
 	}

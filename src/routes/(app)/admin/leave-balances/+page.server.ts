@@ -1,8 +1,8 @@
 import type { PageServerLoad } from './$types';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { leaveTypes, leaveAllocations, users, employeeProfiles } from '$lib/server/db/schema';
 import { and, desc, eq, isNotNull } from 'drizzle-orm';
-import { alias } from 'drizzle-orm/pg-core';
+import { alias } from 'drizzle-orm/sqlite-core';
 import { gateAdminPage } from '$lib/server/capabilities';
 import { notHidden } from '$lib/server/hidden-users';
 

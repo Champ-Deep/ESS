@@ -1,5 +1,5 @@
 import type { PageServerLoad } from './$types';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { employeeProfiles, teams, users } from '$lib/server/db/schema';
 import { and, eq } from 'drizzle-orm';
 import { notHidden } from '$lib/server/hidden-users';

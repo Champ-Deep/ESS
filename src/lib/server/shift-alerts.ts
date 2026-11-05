@@ -1,4 +1,4 @@
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { attendance, devicePunches } from '$lib/server/db/schema';
 import { and, eq, gte, isNotNull } from 'drizzle-orm';
 import { loadShifts, officeToday } from '$lib/server/shifts';

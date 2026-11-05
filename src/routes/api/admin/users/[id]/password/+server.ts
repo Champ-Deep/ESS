@@ -1,13 +1,13 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { users } from '$lib/server/db/schema';
 import { requireUser, canActOnUser } from '$lib/server/rbac';
 import { hasCap } from '$lib/server/capabilities';
 import { hashPassword } from '$lib/server/auth';
 import { eq } from 'drizzle-orm';
 import { hiddenFrom } from '$lib/server/hidden-users';
-import { logActivity } from '$lib/server/db/mongo';
+import { logActivity } from '$lib/server/db/store';
 import { mirrorPasswordToClerk } from '$lib/server/clerk';
 import { userCanReach } from '$lib/server/org-scope';
 import { isNoLoginEmail } from '$lib/no-login';

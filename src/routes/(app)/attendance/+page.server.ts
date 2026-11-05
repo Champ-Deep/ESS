@@ -1,5 +1,5 @@
 import type { PageServerLoad } from './$types';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import {
 	attendance,
 	devicePunches,
@@ -14,7 +14,8 @@ import {
 	users as usersTable
 } from '$lib/server/db/schema';
 import { DEVIATION_MONTHLY_CAP, lapseExpiredCompOffs } from '$lib/server/comp-off';
-import { eq, ne, and, or, gte, lt, lte, desc, inArray, sql } from 'drizzle-orm';
+import { eq, ne, and, or, gte, lt, lte, desc, sql } from 'drizzle-orm';
+import { inArray } from '$lib/server/db/sql';
 import { isProhanceConfigured } from '$lib/server/prohance';
 import {
 	CYCLE_END_DAY,

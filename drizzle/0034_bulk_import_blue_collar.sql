@@ -1,1 +1,0 @@
-ALTER TABLE "bulk_import_rows" ADD COLUMN "blue_collar" boolean DEFAULT false NOT NULL;

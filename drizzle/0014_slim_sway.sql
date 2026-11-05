@@ -1,2 +1,0 @@
-ALTER TABLE "employee_profiles" ADD COLUMN "hr_user_id" uuid;--> statement-breakpoint
-ALTER TABLE "employee_profiles" ADD CONSTRAINT "employee_profiles_hr_user_id_users_id_fk" FOREIGN KEY ("hr_user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;

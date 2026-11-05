@@ -8,9 +8,10 @@
  * applied after the balances underneath it moved.
  */
 
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { leaveAllocations, leaveTypes, employeeProfiles, users } from '$lib/server/db/schema';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
+import { inArray } from '$lib/server/db/sql';
 import { normalizeEmpCode } from '$lib/server/easytime-import';
 import { notHidden } from '$lib/server/hidden-users';
 import type { ParsedBalance } from '$lib/server/leave-balance-sheet';

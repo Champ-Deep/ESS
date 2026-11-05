@@ -1,7 +1,7 @@
 import { SignJWT, jwtVerify } from 'jose';
 import type { Cookies } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
-import { db } from './db/postgres';
+import { db } from './db/client';
 import { teams, users } from './db/schema';
 import { eq } from 'drizzle-orm';
 import type { SessionUser } from './auth';

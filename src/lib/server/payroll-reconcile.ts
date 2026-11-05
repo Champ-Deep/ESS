@@ -1,6 +1,6 @@
 import ExcelJS from 'exceljs';
 import { and, desc, eq } from 'drizzle-orm';
-import { db } from './db/postgres';
+import { db } from './db/client';
 import { payrollReconciliations, users } from './db/schema';
 import { notHidden } from './hidden-users';
 import {

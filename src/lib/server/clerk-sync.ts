@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm';
-import { db } from './db/postgres';
+import { db } from './db/client';
 import { users } from './db/schema';
 import { clerk, clerkConfigured, splitName } from './clerk';
 import { hasPassword } from './password-state';

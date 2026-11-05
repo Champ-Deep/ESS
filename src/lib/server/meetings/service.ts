@@ -1,9 +1,10 @@
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { chatChannels, meetingItems, meetings, tasks, users, zoomUserLinks } from '$lib/server/db/schema';
-import { and, asc, desc, eq, gte, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, isNull, lt, or, sql } from 'drizzle-orm';
+import { chunksFor, inArray } from '$lib/server/db/sql';
 import type { SessionUser } from '$lib/server/auth';
 import { hasCap, loadCapabilities } from '$lib/server/capabilities';
-import { logActivity } from '$lib/server/db/mongo';
+import { logActivity } from '$lib/server/db/store';
 import { postToFeed } from '$lib/server/chat/cards';
 import { postToChannel } from '$lib/server/chat/messages';
 import { publish } from '$lib/server/chat/bus';
@@ -89,7 +90,7 @@ export async function listMeetings(viewer: SessionUser): Promise<MeetingRowView[
 	const rows = await db
 		.select()
 		.from(meetings)
-		.where(and(gte(meetings.startedAt, since), sql`${meetings.state} <> 'cancelled'`, or(eq(meetings.hostId, viewer.id), sql`${viewer.id}::uuid = any(${meetings.attendeeIds})`)))
+		.where(and(gte(meetings.startedAt, since), sql`${meetings.state} <> 'cancelled'`, or(eq(meetings.hostId, viewer.id), sql`exists (select 1 from json_each(${meetings.attendeeIds}) where value = ${viewer.id})`)))
 		.orderBy(desc(meetings.startedAt))
 		.limit(100);
 	return rowsToViews(viewer, rows);
@@ -103,7 +104,7 @@ export async function meetingsToday(viewer: SessionUser): Promise<MeetingRowView
 	const rows = await db
 		.select()
 		.from(meetings)
-		.where(and(gte(meetings.startedAt, start), lt(meetings.startedAt, end), sql`${meetings.state} <> 'cancelled'`, or(eq(meetings.hostId, viewer.id), sql`${viewer.id}::uuid = any(${meetings.attendeeIds})`)))
+		.where(and(gte(meetings.startedAt, start), lt(meetings.startedAt, end), sql`${meetings.state} <> 'cancelled'`, or(eq(meetings.hostId, viewer.id), sql`exists (select 1 from json_each(${meetings.attendeeIds}) where value = ${viewer.id})`)))
 		.orderBy(asc(meetings.startedAt));
 	return rowsToViews(viewer, rows);
 }
@@ -205,7 +206,7 @@ export async function addItem(viewer: SessionUser, meetingId: string, title: str
 	const m = await reviewable(viewer, meetingId);
 	if (!m) return { ok: false, message: 'Only the host can change these minutes', status: 403 };
 	const t = title.trim().replace(/\s+/g, ' ').slice(0, 300) || 'New action item';
-	const [{ n }] = await db.select({ n: sql<number>`coalesce(max(${meetingItems.position}), 0)::int` }).from(meetingItems).where(eq(meetingItems.meetingId, meetingId));
+	const [{ n }] = await db.select({ n: sql<number>`coalesce(max(${meetingItems.position}), 0)` }).from(meetingItems).where(eq(meetingItems.meetingId, meetingId));
 	const [row] = await db.insert(meetingItems).values({ meetingId, title: t, position: n + 1, confidence: '1' }).returning();
 	if (m.state === 'published') await db.update(meetings).set({ state: 'ready' }).where(eq(meetings.id, m.id));
 	await touched(m);
@@ -287,19 +288,20 @@ async function writeItems(m: Row, summary: MeetingSummary, attendees: Attendee[]
 	const { items, extraction } = await extractItems({ summary, meetingDay: istDateKey(m.startedAt), attendees, team: await teamFor(m.hostId) });
 	await db.delete(meetingItems).where(and(eq(meetingItems.meetingId, m.id), isNull(meetingItems.taskId)));
 	if (items.length) {
-		await db.insert(meetingItems).values(
-			items.map((it, n) => ({
-				meetingId: m.id,
-				title: it.title,
-				ownerId: it.ownerId,
-				ownerHeard: it.ownerHeard,
-				dueDate: it.dueDate,
-				priority: it.priority,
-				stepIndex: it.stepIndex,
-				confidence: String(it.confidence),
-				position: n
-			}))
-		);
+		const rows = items.map((it, n) => ({
+			meetingId: m.id,
+			title: it.title,
+			ownerId: it.ownerId,
+			ownerHeard: it.ownerHeard,
+			dueDate: it.dueDate,
+			priority: it.priority,
+			stepIndex: it.stepIndex,
+			confidence: String(it.confidence),
+			position: n
+		}));
+		// 12 columns a row: split to stay under D1's 100 bound values per statement.
+		const [first, ...rest] = chunksFor(rows, 12).map((c) => db.insert(meetingItems).values(c));
+		await db.batch([first, ...rest]);
 	}
 	await db.update(meetings).set({ summary, extraction, state: 'ready', updatedAt: new Date() }).where(eq(meetings.id, m.id));
 	return items.length;
@@ -532,8 +534,8 @@ export async function minutesWaiting(viewer: SessionUser): Promise<{ id: string;
 	const counts = await db
 		.select({
 			meetingId: meetingItems.meetingId,
-			items: sql<number>`count(*) filter (where ${meetingItems.included} and ${meetingItems.taskId} is null)::int`,
-			needOwner: sql<number>`count(*) filter (where ${meetingItems.included} and ${meetingItems.taskId} is null and ${meetingItems.ownerId} is null)::int`
+			items: sql<number>`count(*) filter (where ${meetingItems.included} and ${meetingItems.taskId} is null)`,
+			needOwner: sql<number>`count(*) filter (where ${meetingItems.included} and ${meetingItems.taskId} is null and ${meetingItems.ownerId} is null)`
 		})
 		.from(meetingItems)
 		.where(inArray(meetingItems.meetingId, rows.map((r) => r.id)))

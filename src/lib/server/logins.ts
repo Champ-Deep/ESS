@@ -1,10 +1,10 @@
 import { randomBytes } from 'node:crypto';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { customRoles, employeeProfiles, holidayCalendars, shiftGroups, teams, users } from '$lib/server/db/schema';
 import { and, eq } from 'drizzle-orm';
 import { type Role, type SessionUser } from '$lib/server/auth';
 import { addNewLoginToClerk, newLoginCredentials } from '$lib/server/clerk';
-import { logActivity } from '$lib/server/db/mongo';
+import { logActivity } from '$lib/server/db/store';
 import { queueLoginEmails } from '$lib/server/login-emails';
 import { hasCap, invalidateCapabilities } from '$lib/server/capabilities';
 import { topFromPick, topLabel } from '$lib/chief';

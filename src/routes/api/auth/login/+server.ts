@@ -1,11 +1,11 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { users } from '$lib/server/db/schema';
 import { eq } from 'drizzle-orm';
 import { verifyPassword, issueAccessToken, issueRefreshToken, setAuthCookies } from '$lib/server/auth';
 import { isLoginRateLimited, clearLoginRateLimit } from '$lib/server/db/redis';
-import { logActivity } from '$lib/server/db/mongo';
+import { logActivity } from '$lib/server/db/store';
 import { isNoLoginEmail } from '$lib/no-login';
 
 export const POST: RequestHandler = async ({ request, cookies, getClientAddress }) => {

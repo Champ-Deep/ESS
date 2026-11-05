@@ -9,7 +9,7 @@
  * counted separately, and pink leave is a monthly quota with no balance. Run
  * after ensureLeaveAllocations so the accrual is current.
  */
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import {
 	leaveAllocations,
 	leaveApplications,
@@ -18,7 +18,8 @@ import {
 	holidayCalendars,
 	holidays
 } from '$lib/server/db/schema';
-import { and, eq, gte, inArray, lte } from 'drizzle-orm';
+import { and, eq, gte, lte } from 'drizzle-orm';
+import { inArray } from '$lib/server/db/sql';
 import { checkPinkLeaveEligibility, monthBounds } from '$lib/server/leave-eligibility';
 import { isCompOffLeaveCode, spendableCredits } from '$lib/server/comp-off';
 import { loadWeekOffFor } from '$lib/server/week-off';

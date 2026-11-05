@@ -7,7 +7,7 @@
  * an exit in the month it was last updated — the page says so beside the
  * figures.
  */
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import {
 	announcementReads,
 	announcements,
@@ -25,7 +25,8 @@ import {
 	teams,
 	users
 } from '$lib/server/db/schema';
-import { and, eq, gte, inArray, isNotNull, isNull, lte, ne, sql } from 'drizzle-orm';
+import { and, eq, gte, isNotNull, isNull, lte, ne, sql } from 'drizzle-orm';
+import { inArray } from '$lib/server/db/sql';
 import { loadWeekOffFor } from '$lib/server/week-off';
 import { officeToday } from '$lib/server/shifts';
 import { notHidden } from '$lib/server/hidden-users';
@@ -231,13 +232,13 @@ export async function loadHrAnalytics(opts: { months: number; department: string
 	);
 
 	// ---------- engagement: chat, announcements, tasks ----------
-	const monthExpr = (col: typeof chatMessages.createdAt) => sql<string>`to_char(${col} at time zone 'Asia/Kolkata', 'YYYY-MM')`;
+	const monthExpr = (col: typeof chatMessages.createdAt) => sql<string>`strftime('%Y-%m', ${col} / 1000, 'unixepoch', '+5 hours', '+30 minutes')`;
 	const fromTs = new Date(`${from}T00:00:00+05:30`);
 
 	const [chatRows, chatInUse, annRows, taskRows, meetingRows] = await Promise.all([
 		ids.length
 			? db
-					.select({ month: monthExpr(chatMessages.createdAt), authors: sql<number>`count(distinct ${chatMessages.authorId})::int` })
+					.select({ month: monthExpr(chatMessages.createdAt), authors: sql<number>`count(distinct ${chatMessages.authorId})` })
 					.from(chatMessages)
 					.where(and(inArray(chatMessages.authorId, ids), gte(chatMessages.createdAt, fromTs), isNull(chatMessages.deletedAt)))
 					.groupBy(monthExpr(chatMessages.createdAt))
@@ -277,7 +278,7 @@ export async function loadHrAnalytics(opts: { months: number; department: string
 	const readRows =
 		annIds.length && ids.length
 			? await db
-					.select({ announcementId: announcementReads.announcementId, reads: sql<number>`count(*)::int` })
+					.select({ announcementId: announcementReads.announcementId, reads: sql<number>`count(*)` })
 					.from(announcementReads)
 					.where(and(inArray(announcementReads.announcementId, annIds), inArray(announcementReads.userId, ids)))
 					.groupBy(announcementReads.announcementId)

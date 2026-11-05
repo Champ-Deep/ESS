@@ -1,6 +1,6 @@
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
-import { inArray } from 'drizzle-orm';
+import { inArray } from './sql';
 import * as schema from './schema';
 
 const connectionString =

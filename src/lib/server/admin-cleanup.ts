@@ -1,4 +1,4 @@
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import {
 	users,
 	employeeProfiles,
@@ -19,8 +19,12 @@ import {
 	compOffCredits,
 	tasks
 } from '$lib/server/db/schema';
-import { deleteProfilePicture } from '$lib/server/db/mongo';
-import { and, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
+import { deleteProfilePicture } from '$lib/server/db/store';
+import * as schema from '$lib/server/db/schema';
+import { and, eq, getTableColumns, is, isNull, ne, sql } from 'drizzle-orm';
+import type { BatchItem } from 'drizzle-orm/batch';
+import { getTableConfig, SQLiteTable, type SQLiteColumn } from 'drizzle-orm/sqlite-core';
+import { inArray } from '$lib/server/db/sql';
 import { deleteClerkUser } from './clerk';
 import { notHidden } from './hidden-users';
 
@@ -31,7 +35,7 @@ import { notHidden } from './hidden-users';
  * anything still references throws. Each function here therefore clears
  * inbound references first (nulling them where the referencing row must
  * survive, deleting it where it belongs to the target), then removes the
- * target — all inside one transaction so a failure leaves nothing half-done.
+ * target — all in one D1 batch (atomic) so a failure leaves nothing half-done.
  */
 
 export interface DeleteEmployeeResult {
@@ -53,48 +57,58 @@ export async function deleteEmployee(userId: string): Promise<DeleteEmployeeResu
 	const [target] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
 	if (!target) throw new Error('Employee not found');
 
-	const result = await db.transaction(async (tx) => {
+	// D1 has no interactive transactions: read what the writes need first, then
+	// send every write as one batch, which D1 runs atomically.
+	// Punches point at attendance rows, so unlink before those are removed.
+	const ownAttendance = await db
+		.select({ id: attendance.id })
+		.from(attendance)
+		.where(eq(attendance.userId, userId));
+	// Ledger entries can reference this person's applications.
+	const ownApplications = await db
+		.select({ id: leaveApplications.id })
+		.from(leaveApplications)
+		.where(eq(leaveApplications.userId, userId));
+
+	const writes: BatchItem<'sqlite'>[] = [
 		// --- Clear inbound references from rows that must survive.
-		await tx.update(users).set({ reportsTo: null }).where(eq(users.reportsTo, userId));
-		await tx.update(teams).set({ teamLeadId: null }).where(eq(teams.teamLeadId, userId));
-		await tx
+		db.update(users).set({ reportsTo: null }).where(eq(users.reportsTo, userId)),
+		db.update(teams).set({ teamLeadId: null }).where(eq(teams.teamLeadId, userId)),
+		db
 			.update(leaveApplications)
 			.set({ approverId: null })
-			.where(eq(leaveApplications.approverId, userId));
-		await tx
+			.where(eq(leaveApplications.approverId, userId)),
+		db
 			.update(holidayCalendars)
 			.set({ publishedBy: null })
-			.where(eq(holidayCalendars.publishedBy, userId));
-		await tx
+			.where(eq(holidayCalendars.publishedBy, userId)),
+		db
 			.update(devicePunches)
 			.set({ matchedUserId: null })
-			.where(eq(devicePunches.matchedUserId, userId));
-		await tx
+			.where(eq(devicePunches.matchedUserId, userId)),
+		db
 			.update(bulkImportRows)
 			.set({ createdUserId: null })
-			.where(eq(bulkImportRows.createdUserId, userId));
-		await tx
+			.where(eq(bulkImportRows.createdUserId, userId)),
+		db
 			.update(bulkImportRows)
 			.set({ existingUserId: null })
-			.where(eq(bulkImportRows.existingUserId, userId));
-		await tx.update(bulkImports).set({ uploadedBy: null }).where(eq(bulkImports.uploadedBy, userId));
-		await tx
+			.where(eq(bulkImportRows.existingUserId, userId)),
+		db.update(bulkImports).set({ uploadedBy: null }).where(eq(bulkImports.uploadedBy, userId)),
+		db
 			.update(attendanceImports)
 			.set({ uploadedBy: null })
-			.where(eq(attendanceImports.uploadedBy, userId));
-		await tx
+			.where(eq(attendanceImports.uploadedBy, userId)),
+		db
 			.update(attendanceImportTokens)
 			.set({ createdBy: null })
-			.where(eq(attendanceImportTokens.createdBy, userId));
+			.where(eq(attendanceImportTokens.createdBy, userId))
+	];
 
-		// --- Delete what belongs to them, children before parents.
-		// Punches point at attendance rows, so unlink before those are removed.
-		const ownAttendance = await tx
-			.select({ id: attendance.id })
-			.from(attendance)
-			.where(eq(attendance.userId, userId));
-		if (ownAttendance.length > 0) {
-			await tx
+	// --- Delete what belongs to them, children before parents.
+	if (ownAttendance.length > 0) {
+		writes.push(
+			db
 				.update(devicePunches)
 				.set({ attendanceId: null })
 				.where(
@@ -102,18 +116,15 @@ export async function deleteEmployee(userId: string): Promise<DeleteEmployeeResu
 						devicePunches.attendanceId,
 						ownAttendance.map((a) => a.id)
 					)
-				);
-		}
+				)
+		);
+	}
 
-		// Ledger entries can reference this person's applications.
-		const ownApplications = await tx
-			.select({ id: leaveApplications.id })
-			.from(leaveApplications)
-			.where(eq(leaveApplications.userId, userId));
-		// Comp-off credits point at the application that used them.
-		await tx.delete(compOffCredits).where(eq(compOffCredits.userId, userId));
-		if (ownApplications.length > 0) {
-			await tx
+	// Comp-off credits point at the application that used them.
+	writes.push(db.delete(compOffCredits).where(eq(compOffCredits.userId, userId)));
+	if (ownApplications.length > 0) {
+		writes.push(
+			db
 				.update(compOffCredits)
 				.set({ usedApplicationId: null })
 				.where(
@@ -121,8 +132,8 @@ export async function deleteEmployee(userId: string): Promise<DeleteEmployeeResu
 						compOffCredits.usedApplicationId,
 						ownApplications.map((a) => a.id)
 					)
-				);
-			await tx
+				),
+			db
 				.update(leaveLedger)
 				.set({ relatedApplicationId: null })
 				.where(
@@ -130,40 +141,45 @@ export async function deleteEmployee(userId: string): Promise<DeleteEmployeeResu
 						leaveLedger.relatedApplicationId,
 						ownApplications.map((a) => a.id)
 					)
-				);
-		}
+				)
+		);
+	}
 
-		await tx.delete(leaveLedger).where(eq(leaveLedger.userId, userId));
-		const apps = await tx
+	const appsAt = writes.length + 1;
+	const attAt = writes.length + 3;
+	writes.push(
+		db.delete(leaveLedger).where(eq(leaveLedger.userId, userId)),
+		db
 			.delete(leaveApplications)
 			.where(eq(leaveApplications.userId, userId))
-			.returning({ id: leaveApplications.id });
-		await tx.delete(leaveAllocations).where(eq(leaveAllocations.userId, userId));
-		const att = await tx
+			.returning({ id: leaveApplications.id }),
+		db.delete(leaveAllocations).where(eq(leaveAllocations.userId, userId)),
+		db
 			.delete(attendance)
 			.where(eq(attendance.userId, userId))
-			.returning({ id: attendance.id });
-		await tx.delete(announcementReads).where(eq(announcementReads.userId, userId));
+			.returning({ id: attendance.id }),
+		db.delete(announcementReads).where(eq(announcementReads.userId, userId)),
 		// Their posts stay up; they just no longer name an author.
-		await tx.update(announcements).set({ createdBy: null }).where(eq(announcements.createdBy, userId));
-		await tx.delete(employeeProfiles).where(eq(employeeProfiles.userId, userId));
-
+		db.update(announcements).set({ createdBy: null }).where(eq(announcements.createdBy, userId)),
+		db.delete(employeeProfiles).where(eq(employeeProfiles.userId, userId)),
 		// A task they gave someone stays with that person, who becomes its creator.
-		await tx
+		db
 			.update(tasks)
 			.set({ createdBy: sql`${tasks.assigneeId}` })
-			.where(and(eq(tasks.createdBy, userId), ne(tasks.assigneeId, userId)));
-
-		await clearRemainingReferences(tx, userId);
-		await tx.delete(users).where(eq(users.id, userId));
-
-		return { deletedApplications: apps.length, deletedAttendance: att.length };
-	});
+			.where(and(eq(tasks.createdBy, userId), ne(tasks.assigneeId, userId))),
+		...clearRemainingReferences(userId),
+		db.delete(users).where(eq(users.id, userId))
+	);
+	const results = await runBatch(writes);
+	const result = {
+		deletedApplications: (results[appsAt] as unknown[]).length,
+		deletedAttendance: (results[attAt] as unknown[]).length
+	};
 
 	// Their Clerk login goes too, so the address can't sign in to an empty account.
 	await deleteClerkUser(target.clerkUserId);
 
-	// Mongo isn't in the transaction; do it after the row is definitely gone.
+	// The picture isn't in the batch; do it after the row is definitely gone.
 	await deleteProfilePicture(userId);
 
 	return {
@@ -174,32 +190,49 @@ export async function deleteEmployee(userId: string): Promise<DeleteEmployeeResu
 	};
 }
 
-type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+/** Sends `writes` as one D1 batch (atomic); a no-op for an empty list. */
+async function runBatch(writes: BatchItem<'sqlite'>[]): Promise<unknown[]> {
+	if (writes.length === 0) return [];
+	return (await db.batch(writes as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]])) as unknown[];
+}
 
 /**
  * Every other column that points at users.id — chat memberships, reactions,
  * tasks, meetings, Zoom links, and whatever a later table adds — read from the
- * database's own foreign keys, so a new table can't make deletion fail again.
+ * schema's own foreign keys, so a new table can't make deletion fail again.
+ * (SQLite has no pg_constraint; the migrations are generated from the schema,
+ * so it lists the same keys.) Keys with their own ON DELETE action (cascade,
+ * set null) are left to the database, as before.
  * A row that merely names them (a message they wrote, a roster they published)
  * keeps the row with the reference cleared; a row that can't exist without
  * them (a channel membership, a push subscription) is deleted.
  */
-async function clearRemainingReferences(tx: Tx, userId: string): Promise<void> {
-	const refs = await tx.execute<{ tbl: string; col: string; notNull: boolean }>(sql`
-		select cl.relname as tbl, a.attname as col, a.attnotnull as "notNull"
-		from pg_constraint c
-		join pg_class cl on cl.oid = c.conrelid
-		join pg_attribute a on a.attrelid = c.conrelid and a.attnum = any(c.conkey)
-		where c.contype = 'f' and c.confrelid = 'users'::regclass and c.confdeltype in ('a', 'r')
-	`);
-	for (const { tbl, col, notNull } of refs.rows) {
-		if (tbl === 'users' && col === 'id') continue;
-		if (notNull) {
-			await tx.execute(sql`delete from ${sql.identifier(tbl)} where ${sql.identifier(col)} = ${userId}`);
-		} else {
-			await tx.execute(sql`update ${sql.identifier(tbl)} set ${sql.identifier(col)} = null where ${sql.identifier(col)} = ${userId}`);
+function clearRemainingReferences(userId: string): BatchItem<'sqlite'>[] {
+	const out: BatchItem<'sqlite'>[] = [];
+	for (const table of Object.values(schema)) {
+		if (!is(table, SQLiteTable)) continue;
+		for (const fk of getTableConfig(table).foreignKeys) {
+			if (fk.onDelete && fk.onDelete !== 'no action' && fk.onDelete !== 'restrict') continue;
+			const ref = fk.reference();
+			if (ref.foreignTable !== users) continue;
+			for (const column of ref.columns) {
+				if (table === users && column.name === 'id') continue;
+				if (column.notNull) {
+					out.push(db.delete(table).where(eq(column, userId)));
+				} else {
+					out.push(db.update(table).set({ [keyOf(table, column)]: null }).where(eq(column, userId)));
+				}
+			}
 		}
 	}
+	return out;
+}
+
+/** The schema property name of `column` in `table` (what `.set()` expects). */
+function keyOf(table: SQLiteTable, column: SQLiteColumn): string {
+	const entry = Object.entries(getTableColumns(table)).find(([, c]) => c === column);
+	if (!entry) throw new Error(`column ${column.name} not found`);
+	return entry[0];
 }
 
 /**
@@ -211,14 +244,16 @@ export async function deleteLeaveType(leaveTypeId: string): Promise<{ name: stri
 	const [type] = await db.select().from(leaveTypes).where(eq(leaveTypes.id, leaveTypeId)).limit(1);
 	if (!type) throw new Error('Leave type not found');
 
-	const affected = await db.transaction(async (tx) => {
-		const apps = await tx
-			.select({ id: leaveApplications.id })
-			.from(leaveApplications)
-			.where(eq(leaveApplications.leaveTypeId, leaveTypeId));
+	// Reads first, then the writes as one atomic D1 batch (no transactions on D1).
+	const apps = await db
+		.select({ id: leaveApplications.id })
+		.from(leaveApplications)
+		.where(eq(leaveApplications.leaveTypeId, leaveTypeId));
 
-		if (apps.length > 0) {
-			await tx
+	const writes: BatchItem<'sqlite'>[] = [];
+	if (apps.length > 0) {
+		writes.push(
+			db
 				.update(leaveLedger)
 				.set({ relatedApplicationId: null })
 				.where(
@@ -226,19 +261,23 @@ export async function deleteLeaveType(leaveTypeId: string): Promise<{ name: stri
 						leaveLedger.relatedApplicationId,
 						apps.map((a) => a.id)
 					)
-				);
-		}
-
-		await tx.delete(leaveLedger).where(eq(leaveLedger.leaveTypeId, leaveTypeId));
-		await tx.delete(leaveApplications).where(eq(leaveApplications.leaveTypeId, leaveTypeId));
-		const allocs = await tx
+				)
+		);
+	}
+	writes.push(
+		db.delete(leaveLedger).where(eq(leaveLedger.leaveTypeId, leaveTypeId)),
+		db.delete(leaveApplications).where(eq(leaveApplications.leaveTypeId, leaveTypeId))
+	);
+	const allocsAt = writes.length;
+	writes.push(
+		db
 			.delete(leaveAllocations)
 			.where(eq(leaveAllocations.leaveTypeId, leaveTypeId))
-			.returning({ id: leaveAllocations.id });
-		await tx.delete(leaveTypes).where(eq(leaveTypes.id, leaveTypeId));
-
-		return apps.length + allocs.length;
-	});
+			.returning({ id: leaveAllocations.id }),
+		db.delete(leaveTypes).where(eq(leaveTypes.id, leaveTypeId))
+	);
+	const results = await runBatch(writes);
+	const affected = apps.length + (results[allocsAt] as unknown[]).length;
 
 	return { name: type.name, affected };
 }
@@ -267,10 +306,10 @@ export async function previewCleanup(keepUserId: string): Promise<CleanupPreview
 			.select({ id: users.id, fullName: users.fullName, email: users.email })
 			.from(users)
 			.where(and(ne(users.id, keepUserId), notHidden)),
-		db.select({ n: sql<number>`count(*)::int` }).from(leaveApplications),
-		db.select({ n: sql<number>`count(*)::int` }).from(attendance),
-		db.select({ n: sql<number>`count(*)::int` }).from(bulkImports),
-		db.select({ n: sql<number>`count(*)::int` }).from(leaveAllocations)
+		db.select({ n: sql<number>`count(*)` }).from(leaveApplications),
+		db.select({ n: sql<number>`count(*)` }).from(attendance),
+		db.select({ n: sql<number>`count(*)` }).from(bulkImports),
+		db.select({ n: sql<number>`count(*)` }).from(leaveAllocations)
 	]);
 
 	return {
@@ -308,34 +347,41 @@ export async function runCleanup(
 		counts.employees = others.length;
 	}
 
-	await db.transaction(async (tx) => {
-		if (options.leaveAndAttendanceData) {
-			await tx.update(leaveLedger).set({ relatedApplicationId: null });
-			const ledger = await tx.delete(leaveLedger).returning({ id: leaveLedger.id });
-			const apps = await tx.delete(leaveApplications).returning({ id: leaveApplications.id });
-			const allocs = await tx.delete(leaveAllocations).returning({ id: leaveAllocations.id });
-			await tx.update(devicePunches).set({ attendanceId: null });
-			const att = await tx.delete(attendance).returning({ id: attendance.id });
-			counts.leaveLedger = ledger.length;
-			counts.leaveApplications = apps.length;
-			counts.leaveAllocations = allocs.length;
-			counts.attendance = att.length;
-		}
+	// D1 has no interactive transactions: reads first, then every write in one
+	// atomic batch. `counted` remembers which batch result fills which count.
+	const writes: BatchItem<'sqlite'>[] = [];
+	const counted: [key: string, index: number][] = [];
+	const countRows = (key: string, query: BatchItem<'sqlite'>) => {
+		counted.push([key, writes.length]);
+		writes.push(query);
+	};
 
-		if (options.seededLeaveTypes) {
-			const seeded = await tx
-				.select({ id: leaveTypes.id })
-				.from(leaveTypes)
-				.where(isNull(leaveTypes.code));
-			const ids = seeded.map((s) => s.id);
-			if (ids.length > 0) {
-				// These may still be referenced if leave data wasn't also cleared.
-				const apps = await tx
-					.select({ id: leaveApplications.id })
-					.from(leaveApplications)
-					.where(inArray(leaveApplications.leaveTypeId, ids));
-				if (apps.length > 0) {
-					await tx
+	if (options.leaveAndAttendanceData) {
+		writes.push(db.update(leaveLedger).set({ relatedApplicationId: null }));
+		countRows('leaveLedger', db.delete(leaveLedger).returning({ id: leaveLedger.id }));
+		countRows('leaveApplications', db.delete(leaveApplications).returning({ id: leaveApplications.id }));
+		countRows('leaveAllocations', db.delete(leaveAllocations).returning({ id: leaveAllocations.id }));
+		writes.push(db.update(devicePunches).set({ attendanceId: null }));
+		countRows('attendance', db.delete(attendance).returning({ id: attendance.id }));
+	}
+
+	if (options.seededLeaveTypes) {
+		const seeded = await db
+			.select({ id: leaveTypes.id })
+			.from(leaveTypes)
+			.where(isNull(leaveTypes.code));
+		const ids = seeded.map((s) => s.id);
+		if (ids.length > 0) {
+			// These may still be referenced if leave data wasn't also cleared.
+			// (If it is being cleared, the writes above run first in the batch
+			// and these simply match nothing.)
+			const apps = await db
+				.select({ id: leaveApplications.id })
+				.from(leaveApplications)
+				.where(inArray(leaveApplications.leaveTypeId, ids));
+			if (apps.length > 0) {
+				writes.push(
+					db
 						.update(leaveLedger)
 						.set({ relatedApplicationId: null })
 						.where(
@@ -343,23 +389,26 @@ export async function runCleanup(
 								leaveLedger.relatedApplicationId,
 								apps.map((a) => a.id)
 							)
-						);
-				}
-				await tx.delete(leaveLedger).where(inArray(leaveLedger.leaveTypeId, ids));
-				await tx.delete(leaveApplications).where(inArray(leaveApplications.leaveTypeId, ids));
-				await tx.delete(leaveAllocations).where(inArray(leaveAllocations.leaveTypeId, ids));
-				await tx.delete(leaveTypes).where(inArray(leaveTypes.id, ids));
+						)
+				);
 			}
-			counts.seededLeaveTypes = ids.length;
+			writes.push(
+				db.delete(leaveLedger).where(inArray(leaveLedger.leaveTypeId, ids)),
+				db.delete(leaveApplications).where(inArray(leaveApplications.leaveTypeId, ids)),
+				db.delete(leaveAllocations).where(inArray(leaveAllocations.leaveTypeId, ids)),
+				db.delete(leaveTypes).where(inArray(leaveTypes.id, ids))
+			);
 		}
+		counts.seededLeaveTypes = ids.length;
+	}
 
-		if (options.bulkImportHistory) {
-			const rows = await tx.delete(bulkImportRows).returning({ id: bulkImportRows.id });
-			const imports = await tx.delete(bulkImports).returning({ id: bulkImports.id });
-			counts.bulkImportRows = rows.length;
-			counts.bulkImports = imports.length;
-		}
-	});
+	if (options.bulkImportHistory) {
+		countRows('bulkImportRows', db.delete(bulkImportRows).returning({ id: bulkImportRows.id }));
+		countRows('bulkImports', db.delete(bulkImports).returning({ id: bulkImports.id }));
+	}
+
+	const results = await runBatch(writes);
+	for (const [key, index] of counted) counts[key] = (results[index] as unknown[]).length;
 
 	return counts;
 }

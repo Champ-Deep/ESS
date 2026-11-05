@@ -1,7 +1,7 @@
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { customRoles, users } from '$lib/server/db/schema';
 import { and, eq, ne, sql } from 'drizzle-orm';
-import { logActivity } from '$lib/server/db/mongo';
+import { logActivity } from '$lib/server/db/store';
 import { GRANTABLE_KEYS } from '$lib/capabilities';
 import type { Role, SessionUser } from '$lib/server/auth';
 import { hasCap, invalidateCapabilities } from '$lib/server/capabilities';

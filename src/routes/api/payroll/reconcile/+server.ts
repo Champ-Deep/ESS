@@ -3,7 +3,7 @@ import type { RequestHandler } from './$types';
 import { requireCap } from '$lib/server/capabilities';
 import { loadPayroll } from '$lib/server/payroll';
 import { getRun, listRuns, reconcile, saveRun } from '$lib/server/payroll-reconcile';
-import { logActivity } from '$lib/server/db/mongo';
+import { logActivity } from '$lib/server/db/store';
 
 const CYCLE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const MAX_BYTES = 10 * 1024 * 1024;

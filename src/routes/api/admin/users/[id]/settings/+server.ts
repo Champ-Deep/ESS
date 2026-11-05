@@ -1,10 +1,11 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { requireUser, canActOnUser } from '$lib/server/rbac';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { users, teams, employeeProfiles, shiftGroups, weekOffRosters, customRoles } from '$lib/server/db/schema';
-import { logActivity } from '$lib/server/db/mongo';
+import { logActivity } from '$lib/server/db/store';
 import { eq, and, ne } from 'drizzle-orm';
+import type { BatchItem } from 'drizzle-orm/batch';
 import type { Role } from '$lib/server/auth';
 import { assignRoster, clearRoster } from '$lib/server/week-off';
 import { hasCap, invalidateCapabilities } from '$lib/server/capabilities';
@@ -13,6 +14,7 @@ import { invalidateOrgScope, userCanReach } from '$lib/server/org-scope';
 import { invalidateOrg } from '$lib/server/tasks/service';
 import { hiddenFrom, notHidden } from '$lib/server/hidden-users';
 import { asTopPosition } from '$lib/chief';
+import { background } from '$lib/server/platform';
 
 const ROLES: Role[] = ['super_admin', 'admin', 'team_lead', 'employee'];
 
@@ -303,18 +305,14 @@ export const PUT: RequestHandler = async (event) => {
 		// Cutting the old line and setting the new one are one change: leaving
 		// either half applied would either strand a loop or drop a reporting line
 		// for no reason.
-		await db.transaction(async (tx) => {
-			for (const broken of loopBroken) {
-				await tx
-					.update(users)
-					.set({ reportsTo: null, updatedAt: new Date() })
-					.where(eq(users.id, broken.userId));
-			}
-			if (Object.keys(userPatch).length > 0) {
-				userPatch.updatedAt = new Date();
-				await tx.update(users).set(userPatch).where(eq(users.id, userId));
-			}
-		});
+		const writes: BatchItem<'sqlite'>[] = loopBroken.map((broken) =>
+			db.update(users).set({ reportsTo: null, updatedAt: new Date() }).where(eq(users.id, broken.userId))
+		);
+		if (Object.keys(userPatch).length > 0) {
+			userPatch.updatedAt = new Date();
+			writes.push(db.update(users).set(userPatch).where(eq(users.id, userId)));
+		}
+		await db.batch(writes as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
 	}
 
 	const profilePatch: Record<string, unknown> = {};
@@ -344,12 +342,12 @@ export const PUT: RequestHandler = async (event) => {
 	// A new Team Lead with no team has nothing to lead — the approval queues key
 	// off team membership, so one is created rather than leaving them inert.
 	if (changes.role && (changes.role as { to: Role }).to === 'team_lead' && !target.teamId) {
-		const [team] = await db
-			.insert(teams)
-			.values({ name: `${target.fullName}'s Team`, teamLeadId: userId })
-			.returning();
-		await db.update(users).set({ teamId: team.id }).where(eq(users.id, userId));
-		teamCreated = team.id;
+		const teamId = crypto.randomUUID();
+		await db.batch([
+			db.insert(teams).values({ id: teamId, name: `${target.fullName}'s Team`, teamLeadId: userId }),
+			db.update(users).set({ teamId }).where(eq(users.id, userId))
+		]);
+		teamCreated = teamId;
 	}
 
 	if (Object.keys(changes).length === 0) {
@@ -358,7 +356,7 @@ export const PUT: RequestHandler = async (event) => {
 
 	invalidateCapabilities(userId);
 	// Shift group moves them between shift channels in Champ Chat.
-	void syncMembershipFor(userId).catch((err) => console.error('[chat] sync failed:', err));
+	background(syncMembershipFor(userId).catch((err) => console.error('[chat] sync failed:', err)));
 
 	await logActivity({
 		actorUserId: actor.id,

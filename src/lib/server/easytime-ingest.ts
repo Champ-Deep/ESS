@@ -1,4 +1,4 @@
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import {
 	attendance,
 	attendanceImportTokens,
@@ -13,17 +13,17 @@ import {
 	type ParsedPunch,
 	type PunchDay
 } from '$lib/server/easytime-import';
-import { and, desc, eq, inArray, max, sql } from 'drizzle-orm';
+import { and, desc, eq, max } from 'drizzle-orm';
+import { chunksFor, inArray } from '$lib/server/db/sql';
 
 export const MAX_FEED_RECORDS = 1000;
 
-const IMPORT_LOCK_KEY = 4_172_026;
-
-type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
-
-export async function lockAttendanceImports(tx: Tx): Promise<void> {
-	await tx.execute(sql`select pg_advisory_xact_lock(${IMPORT_LOCK_KEY}::bigint)`);
-}
+/**
+ * Was a Postgres advisory lock that serialised imports. D1 has neither
+ * transactions nor locks; ingestPunches now reads everything first and writes
+ * in batches instead. Kept as a no-op so existing callers still compile.
+ */
+export async function lockAttendanceImports(_tx?: unknown): Promise<void> {}
 
 export interface KeyedPunch extends ParsedPunch {
 	dedupeKey: string;
@@ -53,6 +53,9 @@ export interface IngestResult {
 	unmatchedEmpCodes: string[];
 }
 
+/** Statements per D1 batch: big imports go in a few batches. */
+const WRITE_BATCH = 200;
+
 export async function ingestPunches(
 	parsed: ParsedPunch[],
 	options: { tokenId: string; filename: string | null }
@@ -78,72 +81,107 @@ export async function ingestPunches(
 	let duplicateCount = repeats;
 	const unmatchedCodes = new Set<string>();
 
-	const importId = await db.transaction(async (tx) => {
-		await lockAttendanceImports(tx);
+	// D1 has no interactive transactions: everything is read up front, worked
+	// out in memory, then written in batches (each batch is atomic). A failure
+	// between batches is safe to retry: stored punches dedupe and mergePunch
+	// only ever moves a check-in earlier or a check-out later.
+	const keys = punches.map((p) => p.dedupeKey);
+	const stored = keys.length
+		? await db
+				.select({
+					id: devicePunches.id,
+					dedupeKey: devicePunches.dedupeKey,
+					attendanceId: devicePunches.attendanceId
+				})
+				.from(devicePunches)
+				.where(inArray(devicePunches.dedupeKey, keys))
+		: [];
+	const storedByKey = new Map(stored.map((row) => [row.dedupeKey, row]));
 
-		const keys = punches.map((p) => p.dedupeKey);
-		const stored = keys.length
-			? await tx
+	const userIds = [...new Set(userByCode.values())];
+	const dates = [...new Set(punches.map((p) => p.punchDate))];
+	const existingDays =
+		userIds.length && dates.length
+			? await db
 					.select({
-						id: devicePunches.id,
-						dedupeKey: devicePunches.dedupeKey,
-						attendanceId: devicePunches.attendanceId
+						id: attendance.id,
+						userId: attendance.userId,
+						date: attendance.date,
+						checkInAt: attendance.checkInAt,
+						checkOutAt: attendance.checkOutAt
 					})
-					.from(devicePunches)
-					.where(inArray(devicePunches.dedupeKey, keys))
+					.from(attendance)
+					.where(and(inArray(attendance.userId, userIds), inArray(attendance.date, dates)))
 			: [];
-		const storedByKey = new Map(stored.map((row) => [row.dedupeKey, row]));
+	const days = new Map<string, DayRow>();
+	for (const row of existingDays) {
+		const key = `${row.userId}|${row.date}`;
+		if (!days.has(key)) days.set(key, { id: row.id, checkInAt: row.checkInAt, checkOutAt: row.checkOutAt, isNew: false, changed: new Set() });
+	}
 
-		const [importRow] = await tx
-			.insert(attendanceImports)
-			.values({
-				tokenId: options.tokenId,
-				filename: options.filename,
-				rowCount: parsed.length,
-				matchedCount: 0,
-				unmatchedCount: 0
-			})
-			.returning({ id: attendanceImports.id });
+	const importId = crypto.randomUUID();
+	const punchInserts: (typeof devicePunches.$inferInsert)[] = [];
+	const punchUpdates: { id: string; matchedUserId: string; attendanceId: string }[] = [];
 
-		const days = new Map<string, DayRow>();
-
-		for (const punch of punches) {
-			const previous = storedByKey.get(punch.dedupeKey);
-			if (previous?.attendanceId) {
-				duplicateCount += 1;
-				continue;
-			}
-
-			const userId = userByCode.get(normalizeEmpCode(punch.empCode)) ?? null;
-			if (!userId) {
-				unmatchedCount += 1;
-				unmatchedCodes.add(punch.empCode);
-				if (!previous) {
-					await tx.insert(devicePunches).values(punchRow(punch, importRow.id, null, null));
-				}
-				continue;
-			}
-
-			const attendanceId = await applyPunch(tx, days, userId, punch);
-			matchedCount += 1;
-
-			if (previous) {
-				await tx
-					.update(devicePunches)
-					.set({ matchedUserId: userId, attendanceId })
-					.where(eq(devicePunches.id, previous.id));
-			} else {
-				await tx.insert(devicePunches).values(punchRow(punch, importRow.id, userId, attendanceId));
-			}
+	for (const punch of punches) {
+		const previous = storedByKey.get(punch.dedupeKey);
+		if (previous?.attendanceId) {
+			duplicateCount += 1;
+			continue;
 		}
 
-		await tx
-			.update(attendanceImports)
-			.set({ matchedCount, unmatchedCount, duplicateCount })
-			.where(eq(attendanceImports.id, importRow.id));
+		const userId = userByCode.get(normalizeEmpCode(punch.empCode)) ?? null;
+		if (!userId) {
+			unmatchedCount += 1;
+			unmatchedCodes.add(punch.empCode);
+			if (!previous) punchInserts.push(punchRow(punch, importId, null, null));
+			continue;
+		}
 
-		return importRow.id;
-	});
+		const attendanceId = applyPunch(days, userId, punch);
+		matchedCount += 1;
+
+		if (previous) punchUpdates.push({ id: previous.id, matchedUserId: userId, attendanceId });
+		else punchInserts.push(punchRow(punch, importId, userId, attendanceId));
+	}
+
+	const dayRows = [...days.entries()];
+	const newDays = dayRows
+		.filter(([, d]) => d.isNew)
+		.map(([key, d]) => {
+			const [userId, date] = key.split('|');
+			return { id: d.id, userId, date, checkInAt: d.checkInAt, checkOutAt: d.checkOutAt, source: 'biometric' as const };
+		});
+	const changedDays = dayRows.map(([, d]) => d).filter((d) => !d.isNew && d.changed.size > 0);
+
+	const writes = [
+		db.insert(attendanceImports).values({
+			id: importId,
+			tokenId: options.tokenId,
+			filename: options.filename,
+			rowCount: parsed.length,
+			matchedCount,
+			unmatchedCount,
+			duplicateCount
+		}),
+		...chunksFor(newDays, 13).map((rows) => db.insert(attendance).values(rows)),
+		...changedDays.map((d) => {
+			const patch: Partial<typeof attendance.$inferInsert> = { source: 'biometric' };
+			for (const field of d.changed) patch[field] = d[field];
+			return db.update(attendance).set(patch).where(eq(attendance.id, d.id));
+		}),
+		...chunksFor(punchInserts, 23).map((rows) => db.insert(devicePunches).values(rows).onConflictDoNothing()),
+		...punchUpdates.map((u) =>
+			db
+				.update(devicePunches)
+				.set({ matchedUserId: u.matchedUserId, attendanceId: u.attendanceId })
+				.where(eq(devicePunches.id, u.id))
+		)
+	];
+	for (let i = 0; i < writes.length; i += WRITE_BATCH) {
+		const slice = writes.slice(i, i + WRITE_BATCH);
+		await db.batch(slice as [(typeof slice)[0], ...typeof slice]);
+	}
 
 	return {
 		importId,
@@ -157,52 +195,33 @@ export async function ingestPunches(
 
 interface DayRow extends PunchDay {
 	id: string;
+	/** Not in the database yet: inserted rather than updated. */
+	isNew: boolean;
+	/** Which ends of an existing row this import moved. */
+	changed: Set<'checkInAt' | 'checkOutAt'>;
 }
 
-async function applyPunch(
-	tx: Tx,
-	days: Map<string, DayRow>,
-	userId: string,
-	punch: KeyedPunch
-): Promise<string> {
+function applyPunch(days: Map<string, DayRow>, userId: string, punch: KeyedPunch): string {
 	const key = `${userId}|${punch.punchDate}`;
-	let day = days.get(key);
-
-	if (!day) {
-		const [existing] = await tx
-			.select({
-				id: attendance.id,
-				checkInAt: attendance.checkInAt,
-				checkOutAt: attendance.checkOutAt
-			})
-			.from(attendance)
-			.where(and(eq(attendance.userId, userId), eq(attendance.date, punch.punchDate)))
-			.limit(1);
-		day = existing;
-	}
-
+	const day = days.get(key);
 	const merged = mergePunch(day ?? null, punch);
 
 	if (!day) {
-		const [created] = await tx
-			.insert(attendance)
-			.values({
-				userId,
-				date: punch.punchDate,
-				checkInAt: merged.checkInAt,
-				checkOutAt: merged.checkOutAt,
-				source: 'biometric'
-			})
-			.returning({ id: attendance.id });
-		day = { id: created.id, checkInAt: merged.checkInAt, checkOutAt: merged.checkOutAt };
-	} else if (merged.changed) {
-		const patch: Partial<typeof attendance.$inferInsert> = { source: 'biometric' };
-		patch[merged.changed] = punch.punchedAt;
-		await tx.update(attendance).set(patch).where(eq(attendance.id, day.id));
-		day = { id: day.id, checkInAt: merged.checkInAt, checkOutAt: merged.checkOutAt };
+		const created: DayRow = {
+			id: crypto.randomUUID(),
+			checkInAt: merged.checkInAt,
+			checkOutAt: merged.checkOutAt,
+			isNew: true,
+			changed: new Set()
+		};
+		days.set(key, created);
+		return created.id;
 	}
-
-	days.set(key, day);
+	if (merged.changed) {
+		day.checkInAt = merged.checkInAt;
+		day.checkOutAt = merged.checkOutAt;
+		day.changed.add(merged.changed);
+	}
 	return day.id;
 }
 

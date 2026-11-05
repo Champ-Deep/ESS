@@ -1,0 +1,28 @@
+// Read by adapter-cloudflare (vite.config.ts): at build time to decide where
+// the generated SvelteKit worker and static assets go, and by `npm run dev`
+// for local D1 and R2. The deployable config is ../wrangler.jsonc, whose
+// `main` (cloudflare/worker.ts) imports the build output. Kept separate so
+// the adapter never overwrites cloudflare/worker.ts.
+//
+// No Durable Objects here: under `npm run dev` the chat bus and key-value
+// store use in-process versions. `npm run cf:dev` runs the real thing.
+// The D1/R2 names match ../wrangler.jsonc so both share the same local data.
+{
+	"name": "champ-hr-ess",
+	"main": "../.svelte-kit/cloudflare/_worker.js",
+	"compatibility_date": "2026-10-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"assets": {
+		"directory": "../.svelte-kit/cloudflare",
+		"binding": "ASSETS"
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "champ-hr",
+			"database_id": "REPLACE_WITH_D1_DATABASE_ID",
+			"migrations_dir": "../migrations"
+		}
+	],
+	"r2_buckets": [{ "binding": "FILES", "bucket_name": "champ-hr-files" }]
+}

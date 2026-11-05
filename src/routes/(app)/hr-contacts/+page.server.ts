@@ -1,9 +1,10 @@
 import type { PageServerLoad } from './$types';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { users, employeeProfiles } from '$lib/server/db/schema';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
+import { inArray } from '$lib/server/db/sql';
 import { notHidden } from '$lib/server/hidden-users';
-import { getUsersWithProfilePicture } from '$lib/server/db/mongo';
+import { getUsersWithProfilePicture } from '$lib/server/db/store';
 
 export const load: PageServerLoad = async ({ locals }) => {
 	const user = locals.user!;

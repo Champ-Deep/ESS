@@ -1,1 +1,0 @@
-ALTER TYPE "public"."comp_off_status" ADD VALUE 'manager_approved' BEFORE 'approved';

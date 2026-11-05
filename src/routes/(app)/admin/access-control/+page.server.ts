@@ -1,10 +1,10 @@
 import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { customRoles, teams, users } from '$lib/server/db/schema';
 import { and, asc, eq } from 'drizzle-orm';
 import { notHidden } from '$lib/server/hidden-users';
-import { alias } from 'drizzle-orm/pg-core';
+import { alias } from 'drizzle-orm/sqlite-core';
 import { gateAdminPage, hasCap } from '$lib/server/capabilities';
 import { assignNamedRole, deleteNamedRole, saveNamedRole } from '$lib/server/roles';
 import type { Role } from '$lib/server/auth';

@@ -1,6 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import {
 	leaveApplications,
 	leaveAllocations,
@@ -11,11 +11,13 @@ import {
 } from '$lib/server/db/schema';
 import { requireUser } from '$lib/server/rbac';
 import { eq, and } from 'drizzle-orm';
-import { logActivity } from '$lib/server/db/mongo';
+import type { BatchItem } from 'drizzle-orm/batch';
+import { logActivity } from '$lib/server/db/store';
 import { canReviewStage, isSingleStageFor } from '$lib/server/approval-chain';
 import { isCompOffLeaveCode, consumeCredits, releaseCredits } from '$lib/server/comp-off';
 import { notifyNewRequest, notifyDecision } from '$lib/server/chat/cards';
 import { hiddenFrom } from '$lib/server/hidden-users';
+import { background } from '$lib/server/platform';
 
 const newStatusFor = (decision: 'approve' | 'reject') =>
 	decision === 'approve' ? ('approved' as const) : ('rejected' as const);
@@ -155,83 +157,76 @@ export const POST: RequestHandler = async (event) => {
 		.limit(1);
 	const isCompOff = isCompOffLeaveCode(leaveType?.code);
 
-	// One transaction: the status, the balance, the ledger entry and any credit
-	// movement describe a single decision. Applied separately, a failure midway
-	// leaves a leave approved with its days never deducted, or a comp-off credit
-	// spent against a request that was never approved.
-	let creditShortfall = false;
-	try {
-		await db.transaction(async (tx) => {
-			if (isCompOff) {
-				if (newStatus === 'rejected') {
-					await releaseCredits(application.id, tx);
-				} else if (isReversal && newStatus === 'approved') {
-					// Reversing a rejection: re-reserve what was released.
-					try {
-						await consumeCredits({
-							userId: application.userId,
-							count: days,
-							onDate: String(application.startDate).slice(0, 10),
-							applicationId: application.id,
-							tx
-						});
-					} catch {
-						// Signals a rollback; reported as a 400 outside the callback so
-						// the whole decision is undone rather than half-applied.
-						creditShortfall = true;
-						throw new Error('credit_shortfall');
-					}
-				}
-			}
-
-			await tx
-				.update(leaveApplications)
-				.set({
-					status: newStatus,
-					approverId: approver.id,
-					decidedAt: new Date(),
-					decisionNote: note ?? null
-				})
-				.where(eq(leaveApplications.id, applicationId));
-
-			if (balanceDelta !== 0) {
-				if (allocation) {
-					// Clamped at zero so a double-reversal can never drive usedDays
-					// negative and hand out days the employee was never allocated.
-					const nextUsed = Math.max(0, Number(allocation.usedDays) + balanceDelta);
-					await tx
-						.update(leaveAllocations)
-						.set({ usedDays: String(nextUsed) })
-						.where(eq(leaveAllocations.id, allocation.id));
-				}
-
-				// The original approval entry is left in place — the ledger records what
-				// happened, so a reversal reads as approve-then-refund rather than the
-				// approval never having existed.
-				await tx.insert(leaveLedger).values({
+	// The status, the balance and the ledger entry describe a single decision,
+	// so they go in one batch (atomic on D1). D1 has no interactive
+	// transactions, so the credit movement runs first on its own: a shortfall
+	// still refuses before anything is written, but a failure of the batch
+	// after it would leave the credits moved (rare, and fixable by re-deciding).
+	if (isCompOff) {
+		if (newStatus === 'rejected') {
+			await releaseCredits(application.id);
+		} else if (isReversal && newStatus === 'approved') {
+			// Reversing a rejection: re-reserve what was released.
+			try {
+				await consumeCredits({
 					userId: application.userId,
-					leaveTypeId: application.leaveTypeId,
-					delta: String(-balanceDelta),
-					reason: isReversal
-						? nowApproved
-							? 'Rejection reversed — leave re-approved'
-							: 'Approval reversed by Super Admin'
-						: 'Leave approved',
-					relatedApplicationId: application.id
+					count: days,
+					onDate: String(application.startDate).slice(0, 10),
+					applicationId: application.id
 				});
+			} catch {
+				throw error(
+					400,
+					`Cannot re-approve: ${applicant.fullName} no longer has ${days} comp-off credit(s) available`
+				);
 			}
-		});
-	} catch (err) {
-		// The shortfall throw is our own rollback signal; anything else is real.
-		if (!creditShortfall) throw err;
+		}
 	}
 
-	if (creditShortfall) {
-		throw error(
-			400,
-			`Cannot re-approve: ${applicant.fullName} no longer has ${days} comp-off credit(s) available`
+	const writes: BatchItem<'sqlite'>[] = [
+		db
+			.update(leaveApplications)
+			.set({
+				status: newStatus,
+				approverId: approver.id,
+				decidedAt: new Date(),
+				decisionNote: note ?? null
+			})
+			.where(eq(leaveApplications.id, applicationId))
+	];
+
+	if (balanceDelta !== 0) {
+		if (allocation) {
+			// Clamped at zero so a double-reversal can never drive usedDays
+			// negative and hand out days the employee was never allocated.
+			const nextUsed = Math.max(0, Number(allocation.usedDays) + balanceDelta);
+			writes.push(
+				db
+					.update(leaveAllocations)
+					.set({ usedDays: String(nextUsed) })
+					.where(eq(leaveAllocations.id, allocation.id))
+			);
+		}
+
+		// The original approval entry is left in place — the ledger records what
+		// happened, so a reversal reads as approve-then-refund rather than the
+		// approval never having existed.
+		writes.push(
+			db.insert(leaveLedger).values({
+				userId: application.userId,
+				leaveTypeId: application.leaveTypeId,
+				delta: String(-balanceDelta),
+				reason: isReversal
+					? nowApproved
+						? 'Rejection reversed — leave re-approved'
+						: 'Approval reversed by Super Admin'
+					: 'Leave approved',
+				relatedApplicationId: application.id
+			})
 		);
 	}
+
+	await db.batch(writes as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
 
 	await logActivity({
 		actorUserId: approver.id,
@@ -248,6 +243,6 @@ export const POST: RequestHandler = async (event) => {
 	});
 
 	// Champ Chat: a card in each approver's ESS feed, and every copy kept current.
-	void notifyDecision('leave', applicationId, approver.id).catch((err) => console.error('[chat] card failed:', err));
+	background(notifyDecision('leave', applicationId, approver.id).catch((err) => console.error('[chat] card failed:', err)));
 	return json({ status: newStatus, reversed: isReversal, balanceDelta });
 };

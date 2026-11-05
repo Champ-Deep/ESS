@@ -1,6 +1,7 @@
-import { and, eq, gte, inArray, lte, or } from 'drizzle-orm';
-import { alias } from 'drizzle-orm/pg-core';
-import { db } from './db/postgres';
+import { and, eq, gte, lte, or } from 'drizzle-orm';
+import { inArray } from '$lib/server/db/sql';
+import { alias } from 'drizzle-orm/sqlite-core';
+import { db } from './db/client';
 import {
 	compOffCredits,
 	departments,

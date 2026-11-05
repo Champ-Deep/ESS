@@ -1,6 +1,6 @@
 import { env } from '$env/dynamic/private';
 import { kv } from '$lib/server/chat/bus';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { appSettings } from '$lib/server/db/schema';
 import { eq } from 'drizzle-orm';
 import { encodeMeetingUuid } from './webhook';

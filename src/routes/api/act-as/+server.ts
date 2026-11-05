@@ -1,10 +1,10 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { canOpenPortal, startActing, stopActing } from '$lib/server/act-as';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { users } from '$lib/server/db/schema';
 import { eq } from 'drizzle-orm';
-import { logActivity } from '$lib/server/db/mongo';
+import { logActivity } from '$lib/server/db/store';
 
 /**
  * Opens (POST { userId }) or closes (DELETE) a blue-collar worker's portal.

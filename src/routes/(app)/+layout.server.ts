@@ -1,7 +1,7 @@
 import { redirect } from '@sveltejs/kit';
 import type { LayoutServerLoad } from './$types';
-import { getProfilePicture, getUsersWithProfilePicture } from '$lib/server/db/mongo';
-import { db } from '$lib/server/db/postgres';
+import { getProfilePicture, getUsersWithProfilePicture } from '$lib/server/db/store';
+import { db } from '$lib/server/db/client';
 import { users } from '$lib/server/db/schema';
 import { and, eq, ne, or, asc, sql } from 'drizzle-orm';
 import { loadAdminFacts } from '$lib/server/admin-health';
@@ -55,7 +55,7 @@ export const load: LayoutServerLoad = async ({ locals }) => {
 		);
 		const [rows, [{ n }]] = await Promise.all([
 			db.select({ id: users.id, fullName: users.fullName }).from(users).where(where).orderBy(asc(users.fullName)).limit(4),
-			db.select({ n: sql<number>`count(*)::int` }).from(users).where(where)
+			db.select({ n: sql<number>`count(*)` }).from(users).where(where)
 		]);
 		const pics = await getUsersWithProfilePicture(rows.map((r) => r.id));
 		teamPeek = { people: rows.map((r) => ({ ...r, hasPicture: pics.has(r.id) })), total: n };

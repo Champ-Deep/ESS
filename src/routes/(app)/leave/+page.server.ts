@@ -1,5 +1,5 @@
 import type { PageServerLoad } from './$types';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import {
 	leaveApplications,
 	leaveAllocations,
@@ -9,14 +9,15 @@ import {
 	holidayCalendars,
 	holidays
 } from '$lib/server/db/schema';
-import { eq, and, or, desc, inArray, ne, gte, lte, sql, isNotNull } from 'drizzle-orm';
+import { eq, and, or, desc, ne, gte, lte, sql, isNotNull } from 'drizzle-orm';
+import { inArray } from '$lib/server/db/sql';
 import { checkPinkLeaveEligibility, monthBounds } from '$lib/server/leave-eligibility';
 import { ensureLeaveAllocations } from '$lib/server/leave-accrual';
 import { loadWeekOffFor, currentRosterByUser } from '$lib/server/week-off';
 import { managerFor, reviewableUserIds } from '$lib/server/approval-chain';
 import { leaveReach } from '$lib/server/org-scope';
 import type { SessionUser } from '$lib/server/auth';
-import { getUsersWithProfilePicture } from '$lib/server/db/mongo';
+import { getUsersWithProfilePicture } from '$lib/server/db/store';
 import { notHidden } from '$lib/server/hidden-users';
 
 /**

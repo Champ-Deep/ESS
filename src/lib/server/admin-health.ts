@@ -1,4 +1,4 @@
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import {
 	attendanceImports,
 	bulkImports,
@@ -105,16 +105,16 @@ export async function loadAdminFacts(now = new Date()): Promise<AdminFacts> {
 		loadStaleConfirmations(now),
 		// Adoption: who wrote at least one message this week, how many, and
 		// Ask HR questions still open.
-		db.execute(sql`
+		db.all<{ people: number; messages: number; desk: number }>(sql`
 			select
-				(select count(distinct author_id)::int from chat_messages where created_at > now() - interval '7 days' and author_id is not null
-					and author_id in (select u.id from users u where u.hidden = false)) as people,
-				(select count(*)::int from chat_messages where created_at > now() - interval '7 days' and author_id is not null) as messages,
-				(select count(*)::int from chat_channels where kind = 'desk' and desk_status = 'open'
+				(select count(distinct author_id) from chat_messages where created_at > ${now.getTime() - 7 * DAY} and author_id is not null
+					and author_id in (select u.id from users u where u.hidden = 0)) as people,
+				(select count(*) from chat_messages where created_at > ${now.getTime() - 7 * DAY} and author_id is not null) as messages,
+				(select count(*) from chat_channels where kind = 'desk' and desk_status = 'open'
 					and exists (select 1 from chat_messages m where m.channel_id = chat_channels.id)) as desk
 		`)
 	]);
-	const cw = (chatWeek.rows[0] ?? {}) as { people?: number; messages?: number; desk?: number };
+	const cw: { people?: number; messages?: number; desk?: number } = chatWeek[0] ?? {};
 
 	const chart = buildOrgTree(roster.map((p) => ({ ...p, reportsToChief: Boolean(p.reportsToChief) })));
 	const nameById = new Map(roster.map((p) => [p.id, p.fullName]));

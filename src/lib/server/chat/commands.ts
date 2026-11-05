@@ -1,4 +1,4 @@
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { chatChannels, chatReminders, employeeProfiles, holidayCalendars, holidays, leaveAllocations, leaveTypes, users } from '$lib/server/db/schema';
 import { and, eq } from 'drizzle-orm';
 import type { SessionUser } from '$lib/server/auth';

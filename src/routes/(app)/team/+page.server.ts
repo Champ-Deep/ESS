@@ -4,7 +4,7 @@ import { isNoLoginEmail } from '$lib/no-login';
 import { NO_LOGIN } from '$lib/server/password-state';
 import { openablePortals } from '$lib/server/act-as';
 import type { Actions, PageServerLoad } from './$types';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import {
 	users,
 	teams,
@@ -19,12 +19,14 @@ import {
 	prohanceDays,
 	customRoles
 } from '$lib/server/db/schema';
-import { eq, and, or, inArray, lte, gte, desc, isNotNull, sql } from 'drizzle-orm';
+import { eq, and, or, lte, gte, desc, isNotNull, sql } from 'drizzle-orm';
+import { inArray, chunksFor } from '$lib/server/db/sql';
+import type { BatchItem } from 'drizzle-orm/batch';
 import { hashPassword } from '$lib/server/auth';
 import { notHidden } from '$lib/server/hidden-users';
 import { addNewLoginToClerk, clerkAuthActive, ensureClerkAccount, mirrorPasswordToClerk, newLoginCredentials } from '$lib/server/clerk';
 import { randomBytes } from 'node:crypto';
-import { logActivity, getPasswordActivity, getUsersWithProfilePicture } from '$lib/server/db/mongo';
+import { logActivity, getPasswordActivity, getUsersWithProfilePicture } from '$lib/server/db/store';
 import { canActOnUser } from '$lib/server/rbac';
 import { scopeIds } from '$lib/server/org-scope';
 import { teamPageAccess } from '$lib/server/team-access';
@@ -47,6 +49,7 @@ import { describeRoster, rotationSummary } from '$lib/week-off';
 import { isMailerConfigured } from '$lib/server/mailer';
 import { pendingCount as pendingLoginEmailCount, queueLoginEmails } from '$lib/server/login-emails';
 import { error } from '@sveltejs/kit';
+import { background } from '$lib/server/platform';
 
 /**
  * Every account created from the master tracker gets its own random temporary
@@ -565,7 +568,7 @@ export const actions: Actions = {
 		});
 		if (result.success) {
 			// Straight into their team and shift channels in Champ Chat.
-			void syncMembershipFor(result.userId).catch((err) => console.error('[chat] sync failed:', err));
+			background(syncMembershipFor(result.userId).catch((err) => console.error('[chat] sync failed:', err)));
 			const { userId: _id, ...rest } = result;
 			return rest;
 		}
@@ -649,73 +652,73 @@ export const actions: Actions = {
 		// employee codes are.
 		const seenInSheet = new Set<string>();
 
-		const insertedRows = await db
-			.insert(bulkImportRows)
-			.values(
-				parsedRows.map((r, rowIndex) => {
-					const emailMatchId = existingByEmail.get(r.officialEmail) ?? null;
-					const nameMatch = emailMatchId ? null : suggestExistingUserMatch(r.fullName, allExistingUsers);
-					const code = r.employeeCode?.trim().toUpperCase() ?? null;
-					const codeOwner = code ? takenCodes.get(code) : undefined;
+		const rowValues = parsedRows.map((r, rowIndex) => {
+			const emailMatchId = existingByEmail.get(r.officialEmail) ?? null;
+			const nameMatch = emailMatchId ? null : suggestExistingUserMatch(r.fullName, allExistingUsers);
+			const code = r.employeeCode?.trim().toUpperCase() ?? null;
+			const codeOwner = code ? takenCodes.get(code) : undefined;
 
-					const duplicateInSheet = seenInSheet.has(r.officialEmail);
-					seenInSheet.add(r.officialEmail);
-					// The login id has to be an actual address — the portal
-					// authenticates by email, so anything else creates an account its
-					// owner can never sign in to, whatever password is mailed out.
-					const emailUsable = looksLikeEmail(r.officialEmail);
+			const duplicateInSheet = seenInSheet.has(r.officialEmail);
+			seenInSheet.add(r.officialEmail);
+			// The login id has to be an actual address — the portal
+			// authenticates by email, so anything else creates an account its
+			// owner can never sign in to, whatever password is mailed out.
+			const emailUsable = looksLikeEmail(r.officialEmail);
 
-					let status: 'ready' | 'needs_review' | 'skipped_existing' = 'ready';
-					if (emailMatchId) status = 'skipped_existing';
-					// Both of these produce an unusable login rather than a merely
-					// questionable one, so they outrank the softer name/code flags.
-					else if (!emailUsable || duplicateInSheet) status = 'needs_review';
-					else if (nameMatch) status = 'needs_review';
-					// A code already held by someone else can't be applied as-is.
-					else if (codeOwner) status = 'needs_review';
-					// No work email: someone has to say they are blue collar, and give
-					// them a manager, before the row can be created.
-					else if (isNoLoginEmail(r.officialEmail)) status = 'needs_review';
+			let status: 'ready' | 'needs_review' | 'skipped_existing' = 'ready';
+			if (emailMatchId) status = 'skipped_existing';
+			// Both of these produce an unusable login rather than a merely
+			// questionable one, so they outrank the softer name/code flags.
+			else if (!emailUsable || duplicateInSheet) status = 'needs_review';
+			else if (nameMatch) status = 'needs_review';
+			// A code already held by someone else can't be applied as-is.
+			else if (codeOwner) status = 'needs_review';
+			// No work email: someone has to say they are blue collar, and give
+			// them a manager, before the row can be created.
+			else if (isNoLoginEmail(r.officialEmail)) status = 'needs_review';
 
-					const notes = [
-						...(parseResult.repairs[rowIndex] ?? []),
-						...(duplicateInSheet
-							? [`officialEmail "${r.officialEmail}" is used by an earlier row in this sheet`]
-							: [])
-					];
+			const notes = [
+				...(parseResult.repairs[rowIndex] ?? []),
+				...(duplicateInSheet
+					? [`officialEmail "${r.officialEmail}" is used by an earlier row in this sheet`]
+					: [])
+			];
 
-					// Everything beyond the columns needed to create the login is
-					// carried as-is and written to the profile on apply.
-					const {
-						fullName,
-						officialEmail,
-						designation,
-						teamAndFloor,
-						reportingAuthorityRaw,
-						dottedLineAuthorityRaw,
-						employeeCode: _code,
-						bankRegionRaw: _bankRegionRaw,
-						...profileData
-					} = r;
+			// Everything beyond the columns needed to create the login is
+			// carried as-is and written to the profile on apply.
+			const {
+				fullName,
+				officialEmail,
+				designation,
+				teamAndFloor,
+				reportingAuthorityRaw,
+				dottedLineAuthorityRaw,
+				employeeCode: _code,
+				bankRegionRaw: _bankRegionRaw,
+				...profileData
+			} = r;
 
-					return {
-						importId: importRow.id,
-						employeeCode: code,
-						fullName,
-						designation,
-						officialEmail,
-						teamAndFloor,
-						reportingAuthorityRaw,
-						dottedLineAuthorityRaw,
-						profileData,
-						repairNotes: notes.length > 0 ? notes : null,
-						existingUserId: emailMatchId ?? nameMatch?.id ?? null,
-						status
-					};
-				})
-			)
-			.returning();
+			return {
+				importId: importRow.id,
+				employeeCode: code,
+				fullName,
+				designation,
+				officialEmail,
+				teamAndFloor,
+				reportingAuthorityRaw,
+				dottedLineAuthorityRaw,
+				profileData,
+				repairNotes: notes.length > 0 ? notes : null,
+				existingUserId: emailMatchId ?? nameMatch?.id ?? null,
+				status
+			};
+		});
+		// D1 binds at most 100 values per statement: 17 columns per row.
+		const insertedRows = (
+			await runBatch(chunksFor(rowValues, 17).map((chunk) => db.insert(bulkImportRows).values(chunk).returning()))
+		).flat() as (typeof bulkImportRows.$inferSelect)[];
 
+		const reportingLineUpdates: BatchItem<'sqlite'>[] = [];
 		for (let i = 0; i < parsedRows.length; i++) {
 			const suggestedIndex = suggestReportsToIndex(parsedRows[i].reportingAuthorityRaw, parsedRows, i);
 			const hasRawAuthority = Boolean(parsedRows[i].reportingAuthorityRaw);
@@ -725,15 +728,18 @@ export const actions: Actions = {
 			const alreadyDecided = insertedRows[i].status !== 'ready';
 
 			if (suggestedIndex !== null || (needsReviewForReportingLine && !alreadyDecided)) {
-				await db
-					.update(bulkImportRows)
-					.set({
-						reportsToRowId: suggestedIndex !== null ? insertedRows[suggestedIndex].id : null,
-						status: needsReviewForReportingLine && !alreadyDecided ? 'needs_review' : insertedRows[i].status
-					})
-					.where(eq(bulkImportRows.id, insertedRows[i].id));
+				reportingLineUpdates.push(
+					db
+						.update(bulkImportRows)
+						.set({
+							reportsToRowId: suggestedIndex !== null ? insertedRows[suggestedIndex].id : null,
+							status: needsReviewForReportingLine && !alreadyDecided ? 'needs_review' : insertedRows[i].status
+						})
+						.where(eq(bulkImportRows.id, insertedRows[i].id))
+				);
 			}
 		}
+		await runBatch(reportingLineUpdates);
 
 		// The preview shows the access they will get: anyone the sheet puts under
 		// Chief or Mam, or whom another row reports to, is a Team Lead — the same rule the
@@ -755,17 +761,18 @@ export const actions: Actions = {
 		// it is still unapplied: an applied import is the record of who was made.
 		let replaced: string | null = null;
 		if (/^[0-9a-f-]{36}$/i.test(replaceImportId) && replaceImportId !== importRow.id) {
-			replaced = await db.transaction(async (tx) => {
-				const [old] = await tx
-					.select({ id: bulkImports.id, filename: bulkImports.filename })
-					.from(bulkImports)
-					.where(and(eq(bulkImports.id, replaceImportId), eq(bulkImports.status, 'pending_review')))
-					.limit(1);
-				if (!old) return null;
-				await tx.delete(bulkImportRows).where(eq(bulkImportRows.importId, old.id));
-				await tx.delete(bulkImports).where(eq(bulkImports.id, old.id));
-				return old.filename;
-			});
+			const [old] = await db
+				.select({ id: bulkImports.id, filename: bulkImports.filename })
+				.from(bulkImports)
+				.where(and(eq(bulkImports.id, replaceImportId), eq(bulkImports.status, 'pending_review')))
+				.limit(1);
+			if (old) {
+				await db.batch([
+					db.delete(bulkImportRows).where(eq(bulkImportRows.importId, old.id)),
+					db.delete(bulkImports).where(and(eq(bulkImports.id, old.id), eq(bulkImports.status, 'pending_review')))
+				]);
+				replaced = old.filename;
+			}
 		}
 
 		await logActivity({
@@ -931,6 +938,11 @@ export const actions: Actions = {
 		}
 		const queuedCount = await queueLoginEmails(queuedUserIds, { source: 'bulk', requestedBy: actor.id, importId, sendTo: redirectAllMailTo || null });
 
+		// Team ids are made here so the inserts and the updates go in one batch
+		// (D1 caps the queries per request); `teamIdOf` mirrors what each user's
+		// teamId is after these writes, for the manager lookup below.
+		const teamWrites: BatchItem<'sqlite'>[] = [];
+		const teamIdOf = new Map<string, string | null>();
 		for (const row of rows) {
 			if (row.status !== 'ready') continue;
 			const userId = rowIdToUserId.get(row.id);
@@ -940,24 +952,44 @@ export const actions: Actions = {
 
 			let teamId: string | null = null;
 			if (row.role === 'team_lead') {
-				const [team] = await db.insert(teams).values({ name: `${row.fullName}'s Team`, teamLeadId: userId }).returning();
-				teamId = team.id;
+				teamId = crypto.randomUUID();
+				teamWrites.push(db.insert(teams).values({ id: teamId, name: `${row.fullName}'s Team`, teamLeadId: userId }));
 			}
 
-			await db.update(users).set({ reportsTo: managerUserId, teamId }).where(eq(users.id, userId));
+			teamWrites.push(db.update(users).set({ reportsTo: managerUserId, teamId }).where(eq(users.id, userId)));
+			teamIdOf.set(userId, teamId);
+		}
+		await runBatch(teamWrites);
+
+		// Managers outside this batch (rows matched to an existing login) keep
+		// the team they already have.
+		const outsideManagerIds = [
+			...new Set(
+				rows
+					.map((r) => (r.reportsToRowId ? rowIdToUserId.get(r.reportsToRowId) : undefined))
+					.filter((id): id is string => Boolean(id) && !teamIdOf.has(id!))
+			)
+		];
+		if (outsideManagerIds.length > 0) {
+			for (const m of await db.select({ id: users.id, teamId: users.teamId }).from(users).where(inArray(users.id, outsideManagerIds))) {
+				teamIdOf.set(m.id, m.teamId);
+			}
 		}
 
+		const memberWrites: BatchItem<'sqlite'>[] = [];
 		for (const row of rows) {
 			if (row.status !== 'ready' || row.role === 'team_lead') continue;
 			const userId = rowIdToUserId.get(row.id);
 			const managerUserId = row.reportsToRowId ? rowIdToUserId.get(row.reportsToRowId) ?? null : null;
 			if (!userId || !managerUserId) continue;
 
-			const [manager] = await db.select({ teamId: users.teamId }).from(users).where(eq(users.id, managerUserId)).limit(1);
-			if (manager?.teamId) {
-				await db.update(users).set({ teamId: manager.teamId }).where(eq(users.id, userId));
+			const managerTeamId = teamIdOf.get(managerUserId);
+			if (managerTeamId) {
+				memberWrites.push(db.update(users).set({ teamId: managerTeamId }).where(eq(users.id, userId)));
+				teamIdOf.set(userId, managerTeamId);
 			}
 		}
+		await runBatch(memberWrites);
 
 		// Resolve dotted-line managers against everyone now in the portal, not
 		// just this batch — the dotted line often points at someone senior who was
@@ -966,6 +998,7 @@ export const actions: Actions = {
 		const allUsers = await db.select({ id: users.id, fullName: users.fullName }).from(users).where(notHidden);
 		const candidates = allUsers.map((u) => ({ key: u.id, fullName: u.fullName }));
 
+		const dottedLineWrites: BatchItem<'sqlite'>[] = [];
 		for (const row of rows) {
 			if (row.status !== 'ready' || !row.dottedLineAuthorityRaw) continue;
 			const userId = rowIdToUserId.get(row.id);
@@ -974,11 +1007,14 @@ export const actions: Actions = {
 			const result = matchName(row.dottedLineAuthorityRaw, candidates);
 			if (result.status !== 'matched' || result.key === userId) continue;
 
-			await db
-				.update(employeeProfiles)
-				.set({ dottedLineManagerId: result.key })
-				.where(eq(employeeProfiles.userId, userId));
+			dottedLineWrites.push(
+				db
+					.update(employeeProfiles)
+					.set({ dottedLineManagerId: result.key })
+					.where(eq(employeeProfiles.userId, userId))
+			);
 		}
+		await runBatch(dottedLineWrites);
 
 		const createdCount = rows.filter((r) => r.status === 'ready').length;
 		const skippedCount = rows.filter((r) => r.status === 'skipped_existing').length;
@@ -1161,3 +1197,9 @@ export const actions: Actions = {
 		};
 	}
 };
+
+/** `db.batch` for a list built at run time; does nothing for an empty list. */
+async function runBatch(queries: BatchItem<'sqlite'>[]): Promise<unknown[]> {
+	if (queries.length === 0) return [];
+	return db.batch(queries as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
+}

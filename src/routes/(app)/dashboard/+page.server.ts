@@ -1,7 +1,7 @@
 import { attendanceWindow, buildAttendanceHeatmap } from '$lib/dashboard-analytics';
 import { tenureFrom } from '$lib/tenure';
 import type { PageServerLoad } from './$types';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import {
 	leaveAllocations,
 	leaveApplications,
@@ -13,8 +13,9 @@ import {
 	holidayCalendars,
 	holidays
 } from '$lib/server/db/schema';
-import { eq, and, gte, lt, sql, desc, inArray } from 'drizzle-orm';
-import { getUsersWithProfilePicture } from '$lib/server/db/mongo';
+import { eq, and, gte, lt, sql, desc } from 'drizzle-orm';
+import { inArray } from '$lib/server/db/sql';
+import { getUsersWithProfilePicture } from '$lib/server/db/store';
 import { ensureLeaveAllocations } from '$lib/server/leave-accrual';
 import { meetingsToday } from '$lib/server/meetings/service';
 import { reviewableUserIds } from '$lib/server/approval-chain';
@@ -193,7 +194,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 			upcomingHolidays = await db
 				.select()
 				.from(holidays)
-				.where(and(sql`${holidays.calendarId} in ${publishedCalendars.map((c) => c.id)}`, gte(holidays.date, today)))
+				.where(and(inArray(holidays.calendarId, publishedCalendars.map((c) => c.id)), gte(holidays.date, today)))
 				.orderBy(holidays.date)
 				.limit(2);
 		}

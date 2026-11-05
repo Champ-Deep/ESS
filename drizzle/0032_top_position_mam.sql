@@ -1,1 +1,0 @@
-ALTER TABLE "employee_profiles" ADD COLUMN "top_position" text DEFAULT 'chief' NOT NULL;

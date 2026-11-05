@@ -1,6 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { bulkImports, bulkImportRows, users } from '$lib/server/db/schema';
 import { looksLikeEmail } from '$lib/server/bulk-import';
 import { eq, and, ne } from 'drizzle-orm';

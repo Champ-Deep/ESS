@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { createClerkClient, type ClerkClient } from '@clerk/backend';
 import { env } from '$env/dynamic/private';
 import { env as publicEnv } from '$env/dynamic/public';
-import { db } from './db/postgres';
+import { db } from './db/client';
 import { users } from './db/schema';
 import { eq } from 'drizzle-orm';
 import { hashPassword } from './auth';

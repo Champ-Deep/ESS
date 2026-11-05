@@ -1,6 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import {
 	attendance,
 	attendanceDeviations,
@@ -9,8 +9,9 @@ import {
 	holidays,
 	prohanceDays
 } from '$lib/server/db/schema';
-import { and, eq, inArray, desc } from 'drizzle-orm';
-import { logActivity } from '$lib/server/db/mongo';
+import { and, eq, desc } from 'drizzle-orm';
+import { inArray } from '$lib/server/db/sql';
+import { logActivity } from '$lib/server/db/store';
 import {
 	triageDeviation,
 	DEVIATION_REASONS,
@@ -25,6 +26,7 @@ import {
 } from '$lib/server/comp-off';
 import { notifyNewRequest, notifyDecision } from '$lib/server/chat/cards';
 import { officeToday } from '$lib/server/shifts';
+import { background } from '$lib/server/platform';
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -232,7 +234,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 	});
 
 	// Champ Chat: a card in each approver's ESS feed, and every copy kept current.
-	void notifyNewRequest('deviation', created.id).catch((err) => console.error('[chat] card failed:', err));
+	background(notifyNewRequest('deviation', created.id).catch((err) => console.error('[chat] card failed:', err)));
 
 	return json({
 		deviation: created,

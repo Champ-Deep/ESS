@@ -1,5 +1,5 @@
 import { error, redirect, type RequestEvent } from '@sveltejs/kit';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { customRoles, users } from '$lib/server/db/schema';
 import { eq } from 'drizzle-orm';
 import { effectiveCapabilities, type CapabilityKey } from '$lib/capabilities';

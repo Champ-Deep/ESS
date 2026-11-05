@@ -2,7 +2,7 @@ import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { requireUser } from '$lib/server/rbac';
 import { findVisible } from '$lib/server/announcements';
-import { getAnnouncementFile } from '$lib/server/db/mongo';
+import { getAnnouncementFile } from '$lib/server/db/store';
 
 /** The file attached to an announcement, for anyone the post is meant for. */
 export const GET: RequestHandler = async (event) => {

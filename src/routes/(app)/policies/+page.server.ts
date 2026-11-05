@@ -1,5 +1,5 @@
 import type { PageServerLoad } from './$types';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { employeeProfiles, holidayCalendars, holidays, leaveTypes, shiftGroups } from '$lib/server/db/schema';
 import { eq, and } from 'drizzle-orm';
 

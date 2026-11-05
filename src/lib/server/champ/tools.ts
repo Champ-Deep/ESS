@@ -1,4 +1,4 @@
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import {
 	attendance,
 	attendanceDeviations,
@@ -15,13 +15,14 @@ import {
 	teams,
 	users
 } from '$lib/server/db/schema';
-import { and, desc, eq, gte, ilike, inArray, isNotNull, isNull, lte, ne, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, isNotNull, isNull, lte, ne, or, sql } from 'drizzle-orm';
+import { ilike, inArray } from '$lib/server/db/sql';
 import type { SessionUser, Role } from '$lib/server/auth';
 import { hasCap } from '$lib/server/capabilities';
 import { ensureLeaveAllocations } from '$lib/server/leave-accrual';
 import { reviewableUserIds } from '$lib/server/approval-chain';
 import { loadFeed } from '$lib/server/announcements';
-import { getMongo } from '$lib/server/db/mongo';
+import { searchActivity } from '$lib/server/db/store';
 import { workStatuses } from '$lib/server/chat/presence';
 import { CAPABILITIES, BASE_ROLE_LABEL, GRANTABLE_KEYS, effectiveCapabilities } from '$lib/capabilities';
 import { CHIEF_PICK, MAM_PICK, topLabel, topPositionReference } from '$lib/chief';
@@ -566,16 +567,16 @@ const REPORT_FIELDS: Record<string, { label: string; sql: ReturnType<typeof sql>
 	email: { label: 'Email', sql: sql`u.email` },
 	team: { label: 'Team', sql: sql`t.name` },
 	designation: { label: 'Designation', sql: sql`p.designation` },
-	role: { label: 'Role', sql: sql`coalesce(cr.name, u.role::text)` },
+	role: { label: 'Role', sql: sql`coalesce(cr.name, u.role)` },
 	reports_to: { label: 'Reports to', sql: sql`case when p.reports_to_chief and u.reports_to is null then (case when p.top_position = 'mam' then 'Mam' else 'Chief' end) else m.full_name end` },
 	concerned_hr: { label: 'Concerned HR', sql: sql`hr.full_name` },
 	shift_group: { label: 'Shift group', sql: sql`sg.name` },
 	office_timings: { label: 'Office timings', sql: sql`p.office_timings` },
-	date_of_joining: { label: 'Date of joining', sql: sql`to_char(p.date_of_joining, 'DD/MM/YYYY')` },
+	date_of_joining: { label: 'Date of joining', sql: sql`strftime('%d/%m/%Y', p.date_of_joining)` },
 	on_temp_password: { label: 'Never signed in', sql: sql`case when u.must_change_password and u.temporary_password is not null then 'yes' else 'no' end` },
-	leave_left: { label: 'Leave left (all types)', sql: sql`(select coalesce(sum(la.allocated_days - la.used_days), 0)::text from leave_allocations la where la.user_id = u.id and la.year = extract(year from now())::int)` },
-	el_left: { label: 'Earned leave left', sql: sql`(select coalesce(sum(la.allocated_days - la.used_days), 0)::text from leave_allocations la join leave_types lt on lt.id = la.leave_type_id where la.user_id = u.id and la.year = extract(year from now())::int and upper(lt.code) = 'EL')` },
-	attendance_days_this_month: { label: 'Days in attendance this month', sql: sql`(select count(*)::text from attendance a where a.user_id = u.id and to_char(a.date, 'YYYY-MM') = to_char(now() at time zone 'Asia/Kolkata', 'YYYY-MM'))` }
+	leave_left: { label: 'Leave left (all types)', sql: sql`(select cast(coalesce(sum(la.allocated_days - la.used_days), 0) as text) from leave_allocations la where la.user_id = u.id and la.year = cast(strftime('%Y', 'now') as integer))` },
+	el_left: { label: 'Earned leave left', sql: sql`(select cast(coalesce(sum(la.allocated_days - la.used_days), 0) as text) from leave_allocations la join leave_types lt on lt.id = la.leave_type_id where la.user_id = u.id and la.year = cast(strftime('%Y', 'now') as integer) and upper(lt.code) = 'EL')` },
+	attendance_days_this_month: { label: 'Days in attendance this month', sql: sql`(select cast(count(*) as text) from attendance a where a.user_id = u.id and substr(a.date, 1, 7) = strftime('%Y-%m', 'now', '+5 hours', '+30 minutes'))` }
 };
 
 const reportFields: Tool = {
@@ -610,7 +611,7 @@ const buildReport: Tool = {
 		const team = str(a.team);
 		const role = str(a.role);
 		const cols = sql.join(keys.map((k) => sql`${REPORT_FIELDS[k].sql} as ${sql.identifier(k)}`), sql`, `);
-		const res = await db.execute(sql`
+		const rows = await db.all<Record<string, unknown>>(sql`
 			select ${cols}
 			from users u
 			left join employee_profiles p on p.user_id = u.id
@@ -619,13 +620,12 @@ const buildReport: Tool = {
 			left join users hr on hr.id = p.hr_user_id
 			left join shift_groups sg on sg.id = p.shift_group_id
 			left join custom_roles cr on cr.id = u.custom_role_id
-			where u.is_active and u.hidden = false
-				${team ? sql`and t.name ilike ${'%' + team.replace(/[%_]/g, '') + '%'}` : sql``}
+			where u.is_active and u.hidden = 0
+				${team ? sql`and t.name like ${'%' + team.replace(/[%_]/g, '') + '%'}` : sql``}
 				${['employee', 'team_lead', 'admin', 'super_admin'].includes(role) ? sql`and u.role = ${role}` : sql``}
 			order by u.full_name
 			limit 201
 		`);
-		const rows = res.rows as Record<string, unknown>[];
 		const report: ChampReport = {
 			title: str(a.title) || 'Roster report',
 			columns: keys.map((k) => ({ key: k, label: REPORT_FIELDS[k].label })),
@@ -643,7 +643,7 @@ const searchAudit: Tool = {
 	allowed: (c) => c.mode === 'panel' && hasCap(c.user, 'champ.audit'),
 	run: async (a) => {
 		const since = new Date(Date.now() - Math.min(Number(a.days) || 30, 365) * 86_400_000);
-		const filter: Record<string, unknown> = { createdAt: { $gte: since } };
+		const filter: { since: Date; actorUserId?: string; targetId?: string; actionLike?: string; limit: number } = { since, limit: 40 };
 		if (str(a.person)) {
 			const { person, matches } = await findPerson(str(a.person));
 			if (!person) return ambiguous('person', matches);
@@ -654,15 +654,8 @@ const searchAudit: Tool = {
 			if (!person) return ambiguous('person', matches);
 			filter.targetId = person.id;
 		}
-		if (str(a.action)) filter.action = { $regex: str(a.action).replace(/[^\w.]/g, ''), $options: 'i' };
-		const mongo = await getMongo();
-		const entries = (await mongo.collection('activity_log').find(filter).sort({ createdAt: -1 }).limit(40).toArray()) as unknown as {
-			actorUserId: string;
-			action: string;
-			targetId?: string;
-			details?: Record<string, unknown>;
-			createdAt: Date;
-		}[];
+		if (str(a.action)) filter.actionLike = str(a.action).replace(/[^\w.]/g, '');
+		const entries = await searchActivity(filter);
 		const ids = [...new Set(entries.flatMap((e) => [e.actorUserId, e.targetId].filter(Boolean) as string[]))];
 		const names = ids.length ? new Map((await db.select({ id: users.id, n: users.fullName }).from(users).where(inArray(users.id, ids))).map((r) => [r.id, r.n])) : new Map();
 		return {
@@ -793,8 +786,8 @@ const listRoles: Tool = {
 	allowed: (c) => c.mode === 'panel' && (hasCap(c.user, 'access.view') || hasCap(c.user, 'system.roles')),
 	run: async () => {
 		const named = await db.select().from(customRoles);
-		const counts = await db.execute(sql`select custom_role_id as id, count(*)::int as n from users where is_active and hidden = false group by custom_role_id`);
-		const byId = new Map((counts.rows as { id: string | null; n: number }[]).map((r) => [r.id, r.n]));
+		const counts = await db.all<{ id: string | null; n: number }>(sql`select custom_role_id as id, count(*) as n from users where is_active and hidden = 0 group by custom_role_id`);
+		const byId = new Map(counts.map((r) => [r.id, r.n]));
 		const label = (k: string) => CAPABILITIES.find((c) => c.key === k)?.label ?? k;
 		return {
 			data: {

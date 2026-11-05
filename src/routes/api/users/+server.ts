@@ -1,11 +1,11 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { users, teams } from '$lib/server/db/schema';
 import { requireRole, canCreateRole } from '$lib/server/rbac';
 import { and, eq } from 'drizzle-orm';
 import { notHidden } from '$lib/server/hidden-users';
-import { logActivity } from '$lib/server/db/mongo';
+import { logActivity } from '$lib/server/db/store';
 import { addNewLoginToClerk, newLoginCredentials } from '$lib/server/clerk';
 
 export const POST: RequestHandler = async (event) => {

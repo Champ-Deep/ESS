@@ -1,4 +1,4 @@
-import { db } from '$lib/server/db/postgres';
+import { db, type Db } from '$lib/server/db/client';
 import {
 	compOffCredits,
 	holidayCalendars,
@@ -7,6 +7,7 @@ import {
 	prohanceDays
 } from '$lib/server/db/schema';
 import { and, eq, gte, lte } from 'drizzle-orm';
+import { inArray } from '$lib/server/db/sql';
 import { loadShiftsFor } from '$lib/server/shifts';
 
 /** SOP §1: 7+ working hours on an eligible holiday or weekend earns one comp-off. */
@@ -197,11 +198,10 @@ export function isCompOffLeaveCode(code: string | null | undefined): boolean {
 }
 
 /**
- * Either the pool or an open transaction. Credit moves have to be able to join
- * the caller's transaction — spending a credit and approving the leave that
- * spent it must commit together or not at all.
+ * The database handle credit moves run on. D1 has no interactive transactions,
+ * so a credit move commits on its own rather than with the caller's writes.
  */
-type DbExecutor = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
+type DbExecutor = Db;
 
 /** Approved credits that are still inside their validity window, oldest first. */
 export async function spendableCredits(userId: string, onDate: string) {
@@ -233,7 +233,7 @@ export async function consumeCredits(params: {
 	count: number;
 	onDate: string;
 	applicationId: string;
-	/** Pass the tx when this runs inside a transaction, so it commits or rolls back with it. */
+	/** Optional database handle (kept for callers that pass one). */
 	tx?: DbExecutor;
 }): Promise<(typeof compOffCredits.$inferSelect)[]> {
 	const available = await spendableCredits(params.userId, params.onDate);
@@ -245,7 +245,7 @@ export async function consumeCredits(params: {
 
 	const exec = params.tx ?? db;
 	const spending = available.slice(0, params.count);
-	for (const credit of spending) {
+	if (spending.length) {
 		await exec
 			.update(compOffCredits)
 			.set({
@@ -253,7 +253,7 @@ export async function consumeCredits(params: {
 				usedOn: params.onDate,
 				usedApplicationId: params.applicationId
 			})
-			.where(eq(compOffCredits.id, credit.id));
+			.where(inArray(compOffCredits.id, spending.map((c) => c.id)));
 	}
 	return spending;
 }

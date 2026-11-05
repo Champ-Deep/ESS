@@ -1,6 +1,7 @@
-import { db } from '$lib/server/db/postgres';
+import { db } from '$lib/server/db/client';
 import { attendance, devicePunches, employeeProfiles } from '$lib/server/db/schema';
-import { and, gte, inArray, lt, lte } from 'drizzle-orm';
+import { and, gte, lt, lte } from 'drizzle-orm';
+import { inArray } from '$lib/server/db/sql';
 import { buildShifts, officeDateKey, parseShiftWindow, type PunchInput, type ShiftDay } from '$lib/shift-hours';
 import { deviceUtcOffsetMinutes } from '$lib/server/easytime-import';
 
