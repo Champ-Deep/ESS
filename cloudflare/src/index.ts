@@ -82,9 +82,6 @@ export class AppContainer extends Container<Env> {
 	sleepAfter = '1h';
 	enableInternet = true; // Resend, Zoom, Clerk, ProHance, OpenRouter are all outside
 
-	static outboundByHost = {
-		[R2_BRIDGE_HOST]: (req: Request, env: Env) => r2Bridge(req, env)
-	};
 
 	constructor(ctx: ConstructorParameters<typeof Container>[0], env: Env) {
 		super(ctx, env);
@@ -113,6 +110,15 @@ export class AppContainer extends Container<Env> {
 		throw error;
 	}
 }
+
+// Route the container's requests to R2_BRIDGE_HOST into r2Bridge.
+// This must be an ASSIGNMENT, not a `static outboundByHost = …` class field:
+// with target es2022 a class field defines its own property and skips the
+// library's static setter, so the handler never gets registered and the
+// request falls through to the internet (403 "direct IP access").
+AppContainer.outboundByHost = {
+	[R2_BRIDGE_HOST]: (req, env) => r2Bridge(req, env as unknown as Env)
+};
 
 function app(env: Env) {
 	return getContainer(env.APP, 'main');
