@@ -1,0 +1,29 @@
+# Used instead of ../.dockerignore when building cloudflare/Dockerfile.
+# Same exclusions, except the entrypoint script in cloudflare/ is let through.
+node_modules
+npm-debug.log
+build
+.svelte-kit
+.git
+.gitignore
+.gitattributes
+.vscode
+.env
+.env.*
+!.env.example
+*.pptx
+*.pdf
+*.xlsx
+*.jpeg
+*.jpg
+*.png
+docs
+integrations
+ESS portal design system
+ESS portal design system (6)
+Dockerfile
+docker-compose.yml
+README.md
+PRODUCT.md
+cloudflare
+!cloudflare/ess-box.sh

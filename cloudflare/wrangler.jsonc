@@ -5,13 +5,14 @@
 	"compatibility_date": "2026-10-01",
 	"observability": { "enabled": true },
 
-	// The portal's own Docker image, built from the repo root.
+	// The portal AND its databases (Postgres, MongoDB, Redis) in one image.
+	// Data survives restarts through R2 backups — see ess-box.sh.
 	"containers": [
 		{
 			"class_name": "AppContainer",
-			"image": "../Dockerfile",
+			"image": "./Dockerfile",
 			"image_build_context": "..",
-			"instance_type": "standard-1",
+			"instance_type": "standard-2",
 			"max_instances": 1
 		}
 	],
@@ -23,11 +24,16 @@
 	// Keep-alive: restarts the container within 5 minutes if it ever stops.
 	"triggers": { "crons": ["*/5 * * * *"] },
 
-	// Plain settings. Everything secret (DATABASE_URL, MONGO_URL, REDIS_URL,
-	// JWT_*, API keys) is added with `npx wrangler secret put` (see the guide).
+	// Plain settings. Everything secret (JWT_*, API keys, R2_ACCESS_KEY_ID,
+	// R2_SECRET_ACCESS_KEY) is added as a secret (see the guide).
+	// DATABASE_URL / MONGO_URL / REDIS_URL are set inside the container.
 	"vars": {
 		"NODE_ENV": "production",
 		"ORIGIN": "https://champ-hr.com",
-		"PORTAL_URL": "https://champ-hr.com"
+		"PORTAL_URL": "https://champ-hr.com",
+		"R2_ENDPOINT": "https://ae03bce34fb2cd34756be0003196572f.r2.cloudflarestorage.com",
+		"R2_BUCKET": "champ-hr-ess-backups",
+		"R2_PREFIX": "ess",
+		"BACKUP_INTERVAL_MINUTES": "5"
 	}
 }
