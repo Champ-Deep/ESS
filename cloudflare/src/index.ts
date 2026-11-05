@@ -1,10 +1,12 @@
 /**
- * Runs the portal's existing Docker image (../Dockerfile) on Cloudflare
- * Containers. The app inside is exactly what Railway runs: Node, plus
- * Postgres, MongoDB and Redis reached through DATABASE_URL, MONGO_URL and
- * REDIS_URL.
+ * Runs the portal AND its databases on Cloudflare Containers. The image
+ * (cloudflare/Dockerfile) holds the app plus Postgres, MongoDB and Redis on
+ * localhost; cloudflare/ess-box.sh starts them and keeps the data in R2.
  *
- *   browser → this Worker → the one "app" container → Postgres / Mongo / Redis
+ *   browser → this Worker → the one container (app + Postgres + Mongo + Redis)
+ *                                   │ http://198.51.100.7/… (intercepted)
+ *                                   ▼
+ *                     r2Bridge() below → BACKUPS R2 binding
  *
  * There is a single, always-on instance, like the one Railway service:
  *   - the app's background jobs (setInterval) run inside it, so a second copy
@@ -13,8 +15,13 @@
  */
 import { Container, getContainer } from '@cloudflare/containers';
 
+// The containers library routes intercepted container traffic through this entrypoint.
+export { ContainerProxy } from '@cloudflare/containers';
+
 interface Env {
 	APP: DurableObjectNamespace<AppContainer>;
+	/** Database backups (Postgres + Mongo dumps), written by ess-box.sh through r2Bridge. */
+	BACKUPS: R2Bucket;
 	/** Every var and secret, passed through to the container as environment variables. */
 	[key: string]: unknown;
 }
@@ -22,10 +29,62 @@ interface Env {
 /** The container sees the visitor's IP in this header; the login rate limit keys on it. */
 const CLIENT_IP_HEADER = 'x-portal-client-ip';
 
+/**
+ * Plain-HTTP requests from the container to this address never leave
+ * Cloudflare: they are handed to r2Bridge. It is a reserved documentation
+ * address (TEST-NET-2), so it can never collide with a real host.
+ */
+const R2_BRIDGE_HOST = '198.51.100.7';
+const R2_PREFIX = 'ess/';
+const SAFE_KEY = /^[A-Za-z0-9._\-\/]+$/;
+
+/**
+ * Key-less R2 access for the container, reachable only from inside it:
+ *   GET /_ping        → 200 when the bucket answers
+ *   HEAD/GET /<key>   → read  ess/<key>
+ *   PUT /<key>        → write ess/<key> (needs Content-Length)
+ */
+async function r2Bridge(req: Request, env: Env): Promise<Response> {
+	const path = decodeURIComponent(new URL(req.url).pathname).replace(/^\/+/, '');
+	if (path === '_ping') {
+		await env.BACKUPS.list({ limit: 1 });
+		return new Response('ok');
+	}
+	if (!path || !SAFE_KEY.test(path) || path.split('/').includes('..')) {
+		return new Response('bad key', { status: 400 });
+	}
+	const key = R2_PREFIX + path;
+
+	if (req.method === 'HEAD') {
+		const head = await env.BACKUPS.head(key);
+		return new Response(null, { status: head ? 200 : 404 });
+	}
+	if (req.method === 'GET') {
+		const obj = await env.BACKUPS.get(key);
+		if (!obj) return new Response('not found', { status: 404 });
+		return new Response(obj.body, { headers: { 'content-length': String(obj.size) } });
+	}
+	if (req.method === 'PUT') {
+		const length = Number(req.headers.get('content-length'));
+		if (!req.body || !Number.isFinite(length) || length <= 0) {
+			return new Response('content-length required', { status: 411 });
+		}
+		// Stream straight into R2 without buffering the dump in memory.
+		const { readable, writable } = new FixedLengthStream(length);
+		const [, put] = await Promise.all([req.body.pipeTo(writable), env.BACKUPS.put(key, readable)]);
+		return new Response(put?.etag ?? 'ok', { status: 201 });
+	}
+	return new Response('method not allowed', { status: 405 });
+}
+
 export class AppContainer extends Container<Env> {
 	defaultPort = 3000;
 	sleepAfter = '1h';
-	enableInternet = true; // the databases, Resend, Zoom, Clerk, ProHance are all outside
+	enableInternet = true; // Resend, Zoom, Clerk, ProHance, OpenRouter are all outside
+
+	static outboundByHost = {
+		[R2_BRIDGE_HOST]: (req: Request, env: Env) => r2Bridge(req, env)
+	};
 
 	constructor(ctx: ConstructorParameters<typeof Container>[0], env: Env) {
 		super(ctx, env);
