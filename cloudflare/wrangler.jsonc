@@ -21,6 +21,9 @@
 	},
 	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["AppContainer"] }],
 
+	// Lets the Worker restart the container when vars/secrets change (new version).
+	"version_metadata": { "binding": "CF_VERSION_METADATA" },
+
 	// Database backups. The container reaches this through the Worker (no API keys).
 	"r2_buckets": [{ "binding": "BACKUPS", "bucket_name": "champ-hr-ess-backups" }],
 
@@ -31,8 +34,8 @@
 	// DATABASE_URL / MONGO_URL / REDIS_URL are set inside the container.
 	"vars": {
 		"NODE_ENV": "production",
-		"ORIGIN": "https://champ-hr.com",
-		"PORTAL_URL": "https://champ-hr.com",
+		"ORIGIN": "https://champ-hr-ess.deep-ae0.workers.dev",
+		"PORTAL_URL": "https://champ-hr-ess.deep-ae0.workers.dev",
 		"BACKUP_INTERVAL_MINUTES": "5"
 	}
 }
