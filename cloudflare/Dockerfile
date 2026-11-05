@@ -13,12 +13,12 @@ RUN npm run build
 FROM node:20-slim AS node
 
 # --- Runtime: the official MongoDB 7 image (Ubuntu 22.04, ships mongod,
-# mongosh, mongodump, mongorestore) + Postgres 14 + Redis + AWS CLI for R2 ---
+# mongosh, mongodump, mongorestore) + Postgres 14 + Redis + curl (R2 bridge) ---
 FROM mongo:7 AS production
 
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      postgresql postgresql-client redis-server awscli ca-certificates util-linux \
+      postgresql postgresql-client redis-server curl ca-certificates util-linux \
  && rm -rf /var/lib/apt/lists/*
 
 # Node 20 from the official image.

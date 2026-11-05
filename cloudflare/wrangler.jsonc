@@ -21,19 +21,18 @@
 	},
 	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["AppContainer"] }],
 
+	// Database backups. The container reaches this through the Worker (no API keys).
+	"r2_buckets": [{ "binding": "BACKUPS", "bucket_name": "champ-hr-ess-backups" }],
+
 	// Keep-alive: restarts the container within 5 minutes if it ever stops.
 	"triggers": { "crons": ["*/5 * * * *"] },
 
-	// Plain settings. Everything secret (JWT_*, API keys, R2_ACCESS_KEY_ID,
-	// R2_SECRET_ACCESS_KEY) is added as a secret (see the guide).
+	// Plain settings. Everything secret (JWT_*, API keys) is added as a secret.
 	// DATABASE_URL / MONGO_URL / REDIS_URL are set inside the container.
 	"vars": {
 		"NODE_ENV": "production",
 		"ORIGIN": "https://champ-hr.com",
 		"PORTAL_URL": "https://champ-hr.com",
-		"R2_ENDPOINT": "https://ae03bce34fb2cd34756be0003196572f.r2.cloudflarestorage.com",
-		"R2_BUCKET": "champ-hr-ess-backups",
-		"R2_PREFIX": "ess",
 		"BACKUP_INTERVAL_MINUTES": "5"
 	}
 }

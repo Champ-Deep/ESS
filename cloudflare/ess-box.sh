@@ -6,11 +6,16 @@
 #
 # A Cloudflare container's disk is wiped on every restart and every deploy, so
 # the data lives in R2 between runs:
-#   - on start:   download the latest Postgres + Mongo backup from R2 and restore it
+#   - on start:    download the latest Postgres + Mongo backup from R2 and restore it
 #   - every N min: dump both and upload them to R2 (BACKUP_INTERVAL_MINUTES, default 5)
 #   - on SIGTERM:  stop the app, take one final backup, then shut the databases down
 #   - once an hour: also keep a dated copy under history/ (point-in-time fallback)
 # Redis is not backed up: it only holds sessions, rate limits and caches.
+#
+# R2 is reached WITHOUT any API keys: plain HTTP to R2_BRIDGE_URL is intercepted
+# by the Worker (outboundByHost in cloudflare/src/index.ts), which reads and
+# writes the bucket through its native R2 binding. Nothing outside the
+# container can reach that bridge.
 #
 # Anything written after the last successful backup is lost if the container
 # dies without a clean SIGTERM (host crash, OOM kill).
@@ -25,30 +30,28 @@ BK=$DATA/backup
 PGBIN=$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)
 DB_NAME=champ_hr
 BACKUP_INTERVAL_MINUTES=${BACKUP_INTERVAL_MINUTES:-5}
-R2_PREFIX=${R2_PREFIX:-ess}
+BRIDGE=${R2_BRIDGE_URL:-http://198.51.100.7}
+R2_OK=0
 
-export AWS_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:-}
-export AWS_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:-}
-export AWS_DEFAULT_REGION=auto
+# --- R2 bridge helpers ------------------------------------------------------
+r2_ping() { curl -fsS -m 20 "$BRIDGE/_ping" >/dev/null 2>&1; }
+# 0 = exists, 1 = not found, 2 = error
+r2_exists() {
+  local code
+  code=$(curl -s -o /dev/null -w '%{http_code}' -I -m 60 "$BRIDGE/$1")
+  case "$code" in 200) return 0 ;; 404) return 1 ;; *) log "R2 HEAD $1 returned $code"; return 2 ;; esac
+}
+r2_get() { curl -fsS -m 3600 -o "$2" "$BRIDGE/$1"; }
+r2_put() { curl -fsS -m 3600 -T "$2" -H 'content-type: application/octet-stream' "$BRIDGE/$1" >/dev/null; }
 
-have_r2() { [ -n "${R2_ACCESS_KEY_ID:-}" ] && [ -n "${R2_SECRET_ACCESS_KEY:-}" ] && [ -n "${R2_ENDPOINT:-}" ] && [ -n "${R2_BUCKET:-}" ]; }
-s3() { aws --endpoint-url "$R2_ENDPOINT" s3 "$@" --only-show-errors; }
-remote() { echo "s3://$R2_BUCKET/$R2_PREFIX/$1"; }
-
-# --- 0. Refuse to run without somewhere to keep the data -------------------
-if ! have_r2; then
+# --- 0. Refuse to run without somewhere to keep the data --------------------
+for _ in $(seq 1 20); do r2_ping && { R2_OK=1; break; }; sleep 3; done
+if [ "$R2_OK" != 1 ]; then
   if [ "${ALLOW_EPHEMERAL_DATA:-0}" = "1" ]; then
-    log "WARNING: R2 not configured and ALLOW_EPHEMERAL_DATA=1 — all data is lost on every restart."
+    log "WARNING: R2 bridge unreachable and ALLOW_EPHEMERAL_DATA=1 — all data is lost on every restart."
   else
-    log "FATAL: R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_ENDPOINT / R2_BUCKET are not all set."
-    log "Without them every deploy would wipe the databases. Refusing to start."
-    exit 1
-  fi
-else
-  # Fail closed: if R2 is unreachable we must not start empty and later
-  # overwrite the real backup with an empty one.
-  if ! aws --endpoint-url "$R2_ENDPOINT" s3api head-bucket --bucket "$R2_BUCKET" >/dev/null 2>&1; then
-    log "FATAL: cannot reach R2 bucket '$R2_BUCKET' at $R2_ENDPOINT (check the R2 keys). Refusing to start."
+    # Fail closed: starting empty would later overwrite the real backup.
+    log "FATAL: cannot reach the R2 bridge at $BRIDGE. Refusing to start."
     exit 1
   fi
 fi
@@ -78,55 +81,61 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 
-# --- 2. Restore the latest backup ------------------------------------------
+# --- 2. Restore the latest backup -------------------------------------------
 psql_q() { "$PGBIN/psql" -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -qAt "$@"; }
 
 if [ "$(psql_q -c "select count(*) from pg_database where datname='$DB_NAME'")" = "0" ]; then
   psql_q -c "create database $DB_NAME"
 fi
 
-if have_r2; then
-  if aws --endpoint-url "$R2_ENDPOINT" s3 ls "$(remote latest/postgres.dump)" >/dev/null 2>&1; then
-    log "restoring postgres from $(remote latest/postgres.dump)"
-    s3 cp "$(remote latest/postgres.dump)" "$BK/restore.pg.dump" || { log "FATAL: download failed"; exit 1; }
+if [ "$R2_OK" = 1 ]; then
+  r2_exists latest/postgres.dump; rc=$?
+  if [ $rc = 0 ]; then
+    log "restoring postgres from R2 latest/postgres.dump"
+    r2_get latest/postgres.dump "$BK/restore.pg.dump" || { log "FATAL: download failed"; exit 1; }
     if ! "$PGBIN/pg_restore" -h 127.0.0.1 -U postgres -d "$DB_NAME" --no-owner --no-privileges \
          --exit-on-error "$BK/restore.pg.dump"; then
       log "FATAL: postgres restore failed. Not starting, so the good backup in R2 is not overwritten."
       exit 1
     fi
-  else
+  elif [ $rc = 1 ]; then
     log "no postgres backup in R2 yet — starting with an empty database (first run)"
+  else
+    log "FATAL: could not check R2 for a postgres backup. Refusing to start."; exit 1
   fi
 
-  if aws --endpoint-url "$R2_ENDPOINT" s3 ls "$(remote latest/mongo.archive.gz)" >/dev/null 2>&1; then
-    log "restoring mongodb from $(remote latest/mongo.archive.gz)"
-    s3 cp "$(remote latest/mongo.archive.gz)" "$BK/restore.mongo.gz" || { log "FATAL: download failed"; exit 1; }
+  r2_exists latest/mongo.archive.gz; rc=$?
+  if [ $rc = 0 ]; then
+    log "restoring mongodb from R2 latest/mongo.archive.gz"
+    r2_get latest/mongo.archive.gz "$BK/restore.mongo.gz" || { log "FATAL: download failed"; exit 1; }
     if ! mongorestore --uri mongodb://127.0.0.1:27017 --archive="$BK/restore.mongo.gz" --gzip --drop --quiet; then
       log "FATAL: mongodb restore failed. Not starting, so the good backup in R2 is not overwritten."
       exit 1
     fi
-  else
+  elif [ $rc = 1 ]; then
     log "no mongodb backup in R2 yet — starting empty (first run)"
+  else
+    log "FATAL: could not check R2 for a mongodb backup. Refusing to start."; exit 1
   fi
   rm -f "$BK"/restore.*
 fi
 
-# --- 3. Backup -------------------------------------------------------------
+# --- 3. Backup ---------------------------------------------------------------
 backup() {
-  have_r2 || return 0
+  [ "$R2_OK" = 1 ] || return 0
   (
     flock 9
-    local hour; hour=$(date -u +%Y-%m-%d/%H)
+    hour=$(date -u +%Y-%m-%d/%H)
     "$PGBIN/pg_dump" -h 127.0.0.1 -U postgres -Fc --no-owner --no-privileges "$DB_NAME" -f "$BK/pg.dump" \
       || { log "backup: pg_dump failed"; exit 1; }
     mongodump --uri mongodb://127.0.0.1:27017 --archive="$BK/mongo.archive.gz" --gzip --quiet \
       || { log "backup: mongodump failed"; exit 1; }
-    s3 cp "$BK/pg.dump" "$(remote latest/postgres.dump)" \
-      && s3 cp "$BK/mongo.archive.gz" "$(remote latest/mongo.archive.gz)" \
+    r2_put latest/postgres.dump "$BK/pg.dump" \
+      && r2_put latest/mongo.archive.gz "$BK/mongo.archive.gz" \
       || { log "backup: upload to R2 failed"; exit 1; }
     if [ "$(cat "$BK/.last-history" 2>/dev/null)" != "$hour" ]; then
-      s3 cp "$BK/pg.dump" "$(remote history/$hour/postgres.dump)" \
-        && s3 cp "$BK/mongo.archive.gz" "$(remote history/$hour/mongo.archive.gz)" \
+      r2_put "history/$hour/postgres.dump" "$BK/pg.dump" \
+        && r2_put "history/$hour/mongo.archive.gz" "$BK/mongo.archive.gz" \
         && echo "$hour" > "$BK/.last-history"
     fi
     log "backup ok ($(du -h "$BK/pg.dump" | cut -f1) pg, $(du -h "$BK/mongo.archive.gz" | cut -f1) mongo)"
@@ -139,7 +148,7 @@ stop_databases() {
   su postgres -s /bin/sh -c "$PGBIN/pg_ctl -D $PGDATA -m fast -w stop" >/dev/null 2>&1 || true
 }
 
-# --- 4. Run the app ---------------------------------------------------------
+# --- 4. Run the app ------------------------------------------------------------
 export DATABASE_URL="postgres://postgres@127.0.0.1:5432/$DB_NAME"
 export MONGO_URL="mongodb://127.0.0.1:27017/$DB_NAME"
 export REDIS_URL="redis://127.0.0.1:6379"
