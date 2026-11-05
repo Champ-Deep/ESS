@@ -22,12 +22,17 @@ interface Env {
 	APP: DurableObjectNamespace<AppContainer>;
 	/** Database backups (Postgres + Mongo dumps), written by ess-box.sh through r2Bridge. */
 	BACKUPS: R2Bucket;
+	/** Which Worker version is live; a change means vars/secrets may have changed. */
+	CF_VERSION_METADATA: WorkerVersionMetadata;
 	/** Every var and secret, passed through to the container as environment variables. */
 	[key: string]: unknown;
 }
 
 /** The container sees the visitor's IP in this header; the login rate limit keys on it. */
 const CLIENT_IP_HEADER = 'x-portal-client-ip';
+
+/** Durable Object storage key: the Worker version the running container was started with. */
+const STARTED_VERSION_KEY = 'startedWithVersion';
 
 /**
  * Plain-HTTP requests from the container to this address never leave
@@ -97,8 +102,44 @@ export class AppContainer extends Container<Env> {
 		this.renewActivityTimeout();
 	}
 
-	override onStart() {
+	override async onStart() {
 		console.log('[app] container started');
+		await this.ctx.storage.put(STARTED_VERSION_KEY, this.currentVersion());
+	}
+
+	private restarting: Promise<void> | null = null;
+
+	private currentVersion(): string {
+		return (this.env as Env).CF_VERSION_METADATA?.id ?? 'unknown';
+	}
+
+	/**
+	 * The container only reads its env vars when it starts, and it never sleeps.
+	 * So after a deploy or a dashboard var/secret edit (= a new Worker version),
+	 * restart it once so the new settings actually take effect. SIGTERM lets
+	 * ess-box.sh take its final R2 backup before the databases go down.
+	 */
+	private async restartIfStale(): Promise<void> {
+		const started = await this.ctx.storage.get<string>(STARTED_VERSION_KEY);
+		if (started === this.currentVersion()) return;
+		const { status } = await this.getState();
+		if (status === 'running' || status === 'healthy') {
+			console.log(`[app] worker version changed (${started ?? 'none'} -> ${this.currentVersion()}), restarting container`);
+			await this.stop();
+			for (let i = 0; i < 120; i++) {
+				const s = (await this.getState()).status;
+				if (s === 'stopped' || s === 'stopped_with_code') break;
+				await new Promise((r) => setTimeout(r, 1000));
+			}
+		}
+		// Record now so a slow start can't trigger a second restart; onStart re-records.
+		await this.ctx.storage.put(STARTED_VERSION_KEY, this.currentVersion());
+	}
+
+	override async fetch(request: Request): Promise<Response> {
+		this.restarting ??= this.restartIfStale().finally(() => (this.restarting = null));
+		await this.restarting;
+		return super.fetch(request);
 	}
 
 	override onStop(params: { exitCode?: number; reason?: string }) {
