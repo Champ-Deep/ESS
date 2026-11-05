@@ -57,7 +57,8 @@ if [ "$R2_OK" != 1 ]; then
 fi
 
 mkdir -p "$PGDATA" "$MONGODATA" "$BK"
-chown -R postgres:postgres "$PGDATA"
+touch "$DATA/postgres.log"
+chown -R postgres:postgres "$PGDATA" "$DATA/postgres.log"
 chmod 700 "$PGDATA"
 
 # --- 1. Start the three databases (localhost only) --------------------------
