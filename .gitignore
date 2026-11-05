@@ -39,3 +39,6 @@ docs/integration-credentials.md
 
 *.pem
 *.crx
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
