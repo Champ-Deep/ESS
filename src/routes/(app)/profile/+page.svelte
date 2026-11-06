@@ -455,6 +455,13 @@
 
 		<!-- ===== Aside ===== -->
 		<aside class="ess-stack aside">
+			<section class="ess-card" aria-labelledby="reports-to-heading">
+				<h3 id="reports-to-heading" class="ess-h2 aside-h">Reports to</h3>
+				<p class="plain">{data.managers?.direct?.display ?? 'No manager on file'}</p>
+				{#if data.managers?.direct && data.canTeam}
+					<a class="ess-btn ess-btn--secondary team-link" href="/team">See your team <ChevronRight size={14} /></a>
+				{/if}
+			</section>
 			{#if tab === 'bank'}
 				<section class="ess-card grow-card">
 					<h3 class="ess-h2 aside-h">Visibility &amp; updates</h3>
@@ -528,6 +535,10 @@
 </form>
 
 <style>
+	.team-link {
+		min-height: 44px;
+	}
+
 	/* ---------- identity header ---------- */
 	.identity {
 		display: flex;

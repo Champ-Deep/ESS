@@ -55,7 +55,7 @@
 	<title>HR contacts — Champ HR</title>
 </svelte:head>
 
-<PageHeader crumb={[{ label: 'Today', href: '/dashboard' }, 'HR contacts']} title="The right person to help." sub="Find and contact the HR team for quick support." compact />
+<PageHeader crumb={[{ label: 'Home', href: '/dashboard' }, 'HR contacts']} title="The right person to help." sub="Find and contact the HR team for quick support." compact />
 
 <!-- One full-width column: the team card takes the spare height, contacts
      sit several to a row, and the help steps run across the bottom beside

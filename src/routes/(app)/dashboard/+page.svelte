@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { page } from '$app/state';
 	import { invalidateAll } from '$app/navigation';
 	import Award from '@lucide/svelte/icons/award';
 	import Activity from '@lucide/svelte/icons/activity';
@@ -28,6 +29,9 @@
 	import { timeIst } from '$lib/hub/format';
 
 	let { data } = $props();
+	const teamPeek = $derived(page.data.canTeam ? page.data.teamPeek : null);
+	const teamPeople = $derived(teamPeek?.people.slice(0, 4) ?? []);
+	const teamMore = $derived(Math.max(0, (teamPeek?.total ?? 0) - teamPeople.length));
 
 	const firstName = $derived(data.user.fullName.split(' ')[0]);
 	// Time of day comes from the viewer's clock, after hydration.
@@ -196,7 +200,7 @@
 </script>
 
 <svelte:head>
-	<title>Today — Champ HR ESS Portal</title>
+	<title>Home - Champ HR ESS Portal</title>
 </svelte:head>
 
 <!-- Laptop-sized, one screen: the title row with the figures people check
@@ -232,7 +236,20 @@
 				</a>
 			{/if}
 		</div>
-		<a href="/leave/apply" class="ess-btn ess-btn--primary apply"><Calendar size={16} /> Apply leave</a>
+		<div class="home-actions">
+			{#if teamPeek && teamPeople.length > 0}
+				<a class="your-team" href="/team" aria-label="Your team, {teamPeek.total} {teamPeek.total === 1 ? 'person' : 'people'}">
+					<span class="team-faces" aria-hidden="true">
+						{#each teamPeople as person (person.id)}
+							<span class="team-face"><Avatar userId={person.id} fullName={person.fullName} hasPicture={person.hasPicture} size="sm" /></span>
+						{/each}
+						{#if teamMore > 0}<span class="team-more">+{teamMore}</span>{/if}
+					</span>
+					<span>Your team</span>
+				</a>
+			{/if}
+			<a href="/leave/apply" class="ess-btn ess-btn--primary apply"><Calendar size={16} /> Apply leave</a>
+		</div>
 	</header>
 
 	{#if view === 'today'}
@@ -551,8 +568,57 @@
 	.fig.attn b {
 		color: var(--ess-primary-text);
 	}
+	.home-actions,
+	.your-team,
+	.team-faces {
+		display: flex;
+		align-items: center;
+	}
+	.home-actions {
+		gap: 10px;
+	}
+	.your-team {
+		gap: 10px;
+		min-height: 44px;
+		padding: 0 8px;
+		border-radius: var(--ess-radius-md);
+		color: var(--ess-text);
+		font-size: 13px;
+		white-space: nowrap;
+	}
+	.your-team:hover {
+		background: var(--ess-surface-hover);
+		color: var(--ess-text);
+	}
+	.team-face,
+	.team-more {
+		display: grid;
+		border-radius: 50%;
+		box-shadow: 0 0 0 2px var(--ess-canvas);
+	}
+	.team-face + .team-face,
+	.team-more {
+		margin-left: -8px;
+	}
+	.team-face :global(.avatar[data-tint]) {
+		color: var(--ess-text);
+	}
+	.team-more {
+		place-items: center;
+		min-width: 28px;
+		height: 28px;
+		padding: 0 5px;
+		background: var(--ess-surface);
+		color: var(--ess-text-secondary);
+		font-size: 11px;
+		font-weight: 600;
+	}
+	@media (max-width: 959px) {
+		.your-team {
+			display: none;
+		}
+	}
 	.apply {
-		margin-left: 10px;
 		border-radius: 12px;
 	}
 

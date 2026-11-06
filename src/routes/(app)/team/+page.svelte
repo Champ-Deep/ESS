@@ -42,12 +42,12 @@
 
 	type View = 'roster' | 'weekoff' | 'bulk' | 'logins' | 'passwords';
 
-	/* The employee-facing /team shows People and Week-off schedules. Login
+	/* The employee-facing /team shows People and Schedules. Login
 	   import, login delivery and password activity are administration and only
 	   appear on the People tab of Admin Controls. */
 	const views = $derived<{ id: View; label: string; count?: number }[]>([
 		{ id: 'roster', label: embedded ? 'Directory' : 'People' },
-		{ id: 'weekoff', label: embedded ? 'Week-off rosters' : 'Week-off schedules' },
+		{ id: 'weekoff', label: embedded ? 'Week-off rosters' : 'Schedules' },
 		...(embedded && data.canBulkImport ? [{ id: 'bulk' as const, label: 'Bulk import' }] : []),
 		...(embedded && data.canApproveLogins ? [{ id: 'logins' as const, label: 'Login delivery', count: data.pendingLoginEmails }] : []),
 		...(embedded && data.canSeePasswordActivity ? [{ id: 'passwords' as const, label: 'Password activity' }] : [])

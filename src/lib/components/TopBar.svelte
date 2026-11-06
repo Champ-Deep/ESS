@@ -13,12 +13,11 @@
 	import PanelLeftDashed from '@lucide/svelte/icons/panel-left-dashed';
 	import Avatar from './Avatar.svelte';
 	import { hub } from '$lib/hub/client.svelte';
-	import type { Role } from '$lib/server/auth';
 
 	/**
 	 * The row along the top of the workspace: today's date on the left; the
-	 * section links, a search pill (Champ Hub's command palette), the team's
-	 * faces, Add employee for people who may create logins, settings,
+	 * section links, a search pill (Champ Hub's command palette),
+	 * Add employee for people who may create logins, settings,
 	 * announcements and the person's round avatar on the right. The avatar
 	 * opens profile, password, theme, text size, dock and sign-out.
 	 */
@@ -32,11 +31,7 @@
 		/** Unread announcements; the bell shows a dot when there are any. */
 		notifications?: { count: number; urgent: boolean };
 		activePath?: string;
-		role?: Role;
 		canAdmin?: boolean;
-		/** Whether the Team page is open to them (src/lib/server/team-access.ts). */
-		canTeam?: boolean;
-		teamPeek?: { people: { id: string; fullName: string; hasPicture: boolean }[]; total: number } | null;
 		/** Where Add employee goes, or null when this login cannot create logins. */
 		addEmployeeHref?: string | null;
 	}
@@ -49,27 +44,21 @@
 		roleLabel,
 		notifications = { count: 0, urgent: false },
 		activePath = '',
-		role = 'employee',
 		canAdmin = false,
-		canTeam,
-		teamPeek = null,
 		addEmployeeHref = null
 	}: Props = $props();
 
 	// The same sections as the rail, as text links.
 	const links = $derived([
-		{ href: '/dashboard', label: 'Overview' },
+		{ href: '/dashboard', label: 'Home' },
 		{ href: '/hub', label: 'Champ Hub' },
 		{ href: '/leave', label: 'Leave' },
 		{ href: '/attendance', label: 'Attendance' },
 		{ href: '/policies', label: 'Policies' },
-		...((canTeam ?? role !== 'employee') ? [{ href: '/team', label: 'Team' }] : []),
 		...(canAdmin ? [{ href: '/admin', label: 'Admin' }] : [])
 	]);
 	const isActive = (href: string) =>
 		href === '/dashboard' ? activePath === '/dashboard' || activePath === '/' : activePath === href || activePath.startsWith(href + '/');
-
-	const teamMore = $derived(teamPeek ? teamPeek.total - teamPeek.people.length : 0);
 
 	// The date is the viewer's own, filled in after hydration.
 	let today = $state('');
@@ -183,15 +172,6 @@
 			<Search size={15} strokeWidth={2} />
 			<span class="search-label">Search here</span>
 		</button>
-
-		{#if teamPeek && teamPeek.people.length > 0}
-			<a class="team" href="/team" aria-label="Your team, {teamPeek.total} {teamPeek.total === 1 ? 'person' : 'people'}">
-				{#each teamPeek.people as p (p.id)}
-					<span class="face" title={p.fullName}><Avatar userId={p.id} fullName={p.fullName} hasPicture={p.hasPicture} size="sm" /></span>
-				{/each}
-				{#if teamMore > 0}<span class="more" aria-hidden="true">+{teamMore > 99 ? 99 : teamMore}</span>{/if}
-			</a>
-		{/if}
 
 		{#if addEmployeeHref}
 			<a class="add" href={addEmployeeHref} aria-label="Add employee">
@@ -350,35 +330,7 @@
 		border-color: var(--ess-border);
 	}
 
-	/* ---------- team faces + add ---------- */
-	.team {
-		display: flex;
-		align-items: center;
-	}
-	.face {
-		display: grid;
-		border-radius: 50%;
-		box-shadow: 0 0 0 2px var(--ess-canvas);
-	}
-	.face + .face,
-	.more {
-		margin-left: -8px;
-	}
-	.more {
-		display: grid;
-		place-items: center;
-		min-width: 28px;
-		height: 28px;
-		padding: 0 5px;
-		border-radius: 999px;
-		background: var(--ess-surface);
-		box-shadow: 0 0 0 2px var(--ess-canvas);
-		color: var(--ess-text-secondary);
-		font-size: 11px;
-		font-weight: 600;
-		font-variant-numeric: tabular-nums;
-	}
-
+	/* ---------- add ---------- */
 	.add {
 		display: inline-flex;
 		align-items: center;
@@ -698,7 +650,6 @@
 	}
 
 	@media (max-width: 960px) {
-		.team,
 		.settings,
 		.today {
 			display: none;

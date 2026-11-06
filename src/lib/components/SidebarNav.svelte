@@ -68,7 +68,7 @@
 	type NavItem = { href: string; label: string; icon: typeof Calendar; soon?: boolean };
 
 	const items = $derived.by((): NavItem[] => [
-		{ href: '/dashboard', label: 'Today', icon: CalendarDays },
+		{ href: '/dashboard', label: 'Home', icon: CalendarDays },
 		{ href: '/hub', label: 'Champ Hub', icon: LayoutGrid },
 		{ href: '/leave', label: 'Leave', icon: Calendar },
 		{ href: '/attendance', label: 'Attendance', icon: Clock },
@@ -100,7 +100,7 @@
 	}}
 >
 	<div class="brand">
-		<a href="/dashboard" class="brand-link" aria-label="Champ HR, Today">
+		<a href="/dashboard" class="brand-link" aria-label="Champ HR, Home">
 			<span class="brand-mark" aria-hidden="true">
 				<svg viewBox="0 0 40 40" width="30" height="30">
 					<path d="M20.5 9.5A11 11 0 1 0 20.5 30.5" fill="none" stroke="currentColor" stroke-width="6.5" stroke-linecap="round" />
