@@ -97,7 +97,7 @@ export const ADMIN_TABS: AdminTab[] = [
 	{
 		id: 'policies',
 		href: '/admin/policies',
-		label: 'Policies',
+		label: 'Publish policies',
 		heading: 'Publish with confidence.',
 		category: 'Policies',
 		blurb: 'Publish the holiday calendar and leave policy from the source document.',
@@ -157,7 +157,7 @@ export const ADMIN_TABS: AdminTab[] = [
 	{
 		id: 'tweaks',
 		href: '/admin/tweaks',
-		label: 'Appearance',
+		label: 'Design tweaks',
 		heading: 'Make the workspace feel right.',
 		category: 'System',
 		blurb: 'Preview design variants in your browser only. Employees are unaffected.',

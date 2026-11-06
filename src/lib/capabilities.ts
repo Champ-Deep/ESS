@@ -49,7 +49,7 @@ export const CAPABILITIES = [
 	{ key: 'payroll.view', label: 'See payroll', group: 'Payroll', description: 'Open Payroll: the month-wise attendance tracker and the salary report, and download them as CSV or Excel.', grantable: true },
 	{ key: 'payroll.manage', label: 'Edit payroll', group: 'Payroll', description: 'Stop or hold a salary, set last working days, add HR comments and correct opening leave balances for a payroll month.', grantable: true },
 	// --- Policies
-	{ key: 'policies.publish', label: 'Publish policies and holidays', group: 'Policies', description: 'Publish the holiday calendar and leave policy, and change leave types.', grantable: true },
+	{ key: 'policies.publish', label: 'Publish policies and holidays', group: 'Policies', description: 'Publish the holiday calendar and leave policy, and change leave types. Admin base role required.', grantable: true },
 	{ key: 'org.view', label: 'See the org chart', group: 'Policies', description: 'The reporting hierarchy for the whole company.', grantable: true },
 	{ key: 'access.view', label: 'See roles and access', group: 'Policies', description: 'Read who holds which role and privilege.', grantable: true },
 	// --- Communication
@@ -71,7 +71,7 @@ export const CAPABILITIES = [
 	{ key: 'champ.audit', label: 'Audit trail in Champ', group: 'Champ', description: 'Search who changed what, and when.', grantable: true },
 	// --- System
 	{ key: 'system.cleanup', label: 'Data cleanup', group: 'System', description: 'Delete seeded and test data. Super Admin only.', grantable: false },
-	{ key: 'system.design_tweaks', label: 'Design tweaks', group: 'System', description: 'Preview design variants in your browser.', grantable: true },
+	{ key: 'system.design_tweaks', label: 'Design tweaks', group: 'System', description: 'Preview design variants in your browser. Super Admin only.', grantable: false },
 	{ key: 'system.roles', label: 'Manage roles', group: 'System', description: 'Create, change and delete named roles. Super Admin only.', grantable: false }
 ] as const satisfies readonly Capability[];
 
@@ -119,12 +119,16 @@ export function defaultCapabilities(role: Role): CapabilityKey[] {
 /**
  * Base role defaults plus a named role's privileges. Unknown keys (a privilege
  * removed from the catalogue since the role was saved) are dropped, and a
- * named role can never add a Super Admin-only power.
+ * named role can never add a Super Admin-only power. Policy publishing also
+ * requires the admin base role, so legacy employee grants stay ineffective.
  */
 export function effectiveCapabilities(role: Role, extra: readonly string[] = []): CapabilityKey[] {
 	if (role === 'super_admin') return CAPABILITY_KEYS;
 	const set = new Set<CapabilityKey>(defaultCapabilities(role));
-	for (const key of extra) if ((GRANTABLE_KEYS as string[]).includes(key)) set.add(key as CapabilityKey);
+	for (const key of extra) {
+		if (key === 'policies.publish' && role !== 'admin') continue;
+		if ((GRANTABLE_KEYS as string[]).includes(key)) set.add(key as CapabilityKey);
+	}
 	return CAPABILITY_KEYS.filter((k) => set.has(k));
 }
 

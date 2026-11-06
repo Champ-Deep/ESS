@@ -15,14 +15,14 @@ import type { SessionUser } from '$lib/server/auth';
  * every request would otherwise pay a join.
  */
 
-type Loaded = { caps: CapabilityKey[]; customRoleId: string | null; customRoleName: string | null; at: number };
+type Loaded = { role: SessionUser['role']; caps: CapabilityKey[]; customRoleId: string | null; customRoleName: string | null; at: number };
 
 const TTL_MS = 30_000;
 const cache = new Map<string, Loaded>();
 
 export async function loadCapabilities(user: Pick<SessionUser, 'id' | 'role'>): Promise<Loaded> {
 	const hit = cache.get(user.id);
-	if (hit && Date.now() - hit.at < TTL_MS) return hit;
+	if (hit && hit.role === user.role && Date.now() - hit.at < TTL_MS) return hit;
 
 	const [row] = await db
 		.select({ customRoleId: users.customRoleId, name: customRoles.name, capabilities: customRoles.capabilities })
@@ -32,6 +32,7 @@ export async function loadCapabilities(user: Pick<SessionUser, 'id' | 'role'>): 
 		.limit(1);
 
 	const loaded: Loaded = {
+		role: user.role,
 		caps: effectiveCapabilities(user.role, row?.capabilities ?? []),
 		customRoleId: row?.customRoleId ?? null,
 		customRoleName: row?.name ?? null,
@@ -50,6 +51,8 @@ export function invalidateCapabilities(userId?: string) {
 export function hasCap(user: SessionUser | null | undefined, key: CapabilityKey): boolean {
 	if (!user) return false;
 	if (user.role === 'super_admin') return true;
+	if (key === 'system.design_tweaks') return false;
+	if (key === 'policies.publish' && user.role !== 'admin') return false;
 	return (user.capabilities ?? []).includes(key);
 }
 

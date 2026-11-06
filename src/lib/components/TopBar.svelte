@@ -20,7 +20,7 @@
 	 * section links, a search pill (Champ Hub's command palette), the team's
 	 * faces, Add employee for people who may create logins, settings,
 	 * announcements and the person's round avatar on the right. The avatar
-	 * opens profile, password, theme, text size, dock and sign-out.
+	 * opens profile, password, text size, dock and sign-out.
 	 */
 	interface Props {
 		fullName: string;
@@ -213,6 +213,18 @@
 			{#if notifications.count > 0}<span class="dot" class:urgent={notifications.urgent}></span>{/if}
 		</a>
 
+		<!-- Svelte adaptation of 21st.dev ayushmxxn/theme-toggle. Existing ESS persistence and tokens. -->
+		<button
+			type="button"
+			class="round theme-toggle"
+			aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+			title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+			data-theme={theme}
+			onclick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+		>
+			{#if theme === 'dark'}<Sun size={17} strokeWidth={1.75} aria-hidden="true" />{:else}<Moon size={17} strokeWidth={1.75} aria-hidden="true" />{/if}
+		</button>
+
 		<div class="me">
 			<button type="button" class="me-btn" aria-haspopup="menu" aria-expanded={menuOpen} aria-label="Your account" onclick={() => (menuOpen = !menuOpen)}>
 				<Avatar {userId} {fullName} {hasPicture} size="md" version={pictureVersion ?? undefined} />
@@ -227,10 +239,7 @@
 					<a role="menuitem" href="/profile" onclick={() => (menuOpen = false)}><User size={15} /> My profile</a>
 					<a role="menuitem" href="/change-password" onclick={() => (menuOpen = false)}><KeyRound size={15} /> Change password</a>
 					<div class="menu-sep"></div>
-					<div class="seg" role="group" aria-label="Appearance">
-						<button type="button" aria-pressed={theme === 'light'} onclick={() => setTheme('light')}><Sun size={14} /> Light</button>
-						<button type="button" aria-pressed={theme === 'dark'} onclick={() => setTheme('dark')}><Moon size={14} /> Dark</button>
-					</div>
+
 					<div class="pref">
 						<span class="pref-label">Text size <b>{Math.round(TEXT_STEPS[textStep] * 100)}%</b></span>
 						<div class="text-size" role="group" aria-label="Text size">
@@ -418,6 +427,18 @@
 	.round:hover {
 		color: var(--ess-text);
 		background: var(--ess-surface-hover);
+	}
+	.round.theme-toggle {
+		flex-shrink: 0;
+		width: 44px;
+		height: 44px;
+		padding: 0;
+		cursor: pointer;
+		color: var(--ess-text);
+	}
+	.theme-toggle:focus-visible {
+		outline: 3px solid var(--ess-primary);
+		outline-offset: 3px;
 	}
 	.dot {
 		position: absolute;

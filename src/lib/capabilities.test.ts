@@ -4,6 +4,28 @@ import { visibleAdminTabs } from './admin-tabs';
 import { dmAllowed, type Person } from './server/chat/access';
 
 describe('effective privileges', () => {
+	it.each(['employee', 'team_lead', 'admin'] as const)('keeps restricted surfaces out of %s defaults', (role) => {
+		expect(defaultCapabilities(role)).not.toContain('policies.publish');
+		expect(defaultCapabilities(role)).not.toContain('system.design_tweaks');
+	});
+
+	it.each(['employee', 'team_lead'] as const)('ignores legacy restricted grants for %s', (role) => {
+		const caps = effectiveCapabilities(role, ['policies.publish', 'system.design_tweaks', 'chat.manage_rules']);
+		expect(caps).not.toContain('policies.publish');
+		expect(caps).not.toContain('system.design_tweaks');
+		expect(caps).toContain('chat.manage_rules');
+		expect(visibleAdminTabs(caps).map((t) => t.id)).not.toContain('policies');
+		expect(visibleAdminTabs(caps).map((t) => t.id)).not.toContain('tweaks');
+	});
+
+	it('allows explicitly delegated policy publishing to admin, but never design tweaks', () => {
+		const caps = effectiveCapabilities('admin', ['policies.publish', 'system.design_tweaks']);
+		expect(caps).toContain('policies.publish');
+		expect(caps).not.toContain('system.design_tweaks');
+		expect(visibleAdminTabs(caps).map((t) => t.label)).toContain('Publish policies');
+		expect(visibleAdminTabs(effectiveCapabilities('super_admin')).map((t) => t.label)).toContain('Design tweaks');
+	});
+
 	it('gives a Super Admin everything and nobody else the Super Admin-only powers', () => {
 		expect(effectiveCapabilities('super_admin')).toEqual(CAPABILITY_KEYS);
 		const all = effectiveCapabilities('admin', CAPABILITY_KEYS);

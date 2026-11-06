@@ -1,4 +1,4 @@
-# Champ HR ESS Portal — Functionality Map
+# Champ HR ESS Portal: Functionality Map
 
 A complete map of what the application does, how access is enforced, and where
 each capability lives in the code. Every entry below was read from the source
@@ -17,13 +17,19 @@ Four roles, defined in `src/lib/server/auth.ts` and enforced by
 
 | Role | Scope |
 |---|---|
-| `super_admin` | Everything. The only role that can publish policy, delete records, run cleanup, and manage employee codes. |
-| `admin` | Employee management, password resets, employee codes, pink-leave overrides. Cannot publish policy or delete. |
+| `super_admin` | Everything, including Publish policies and Super Admin-only Design tweaks, record deletion and cleanup. |
+| `admin` | Employee management, password resets, employee codes, pink-leave overrides. Publish policies requires an explicit `policies.publish` grant. No Design tweaks or deletion. |
 | `team_lead` | Their own team: create employees, reset their passwords, approve their leave. |
 | `employee` | Self-service only: own profile, own leave, own attendance. |
 
 **Creation hierarchy** (`canCreateRole`): Super Admin creates anyone; Admin
 creates Team Leads and Employees; Team Lead creates Employees only.
+
+Publish policies is restricted to admin and super_admin base roles. Stored named-role
+grants for employee and team_lead are ignored, not deleted. Design tweaks is not
+grantable and is effective only for super_admin. Shared server guards enforce these
+role limits independently of the supplied capability list. UI entries use the same
+effective capabilities. Employee-facing `/policies` remains available.
 
 **Acting on another user** (`canActOnUser`): permitted for yourself, any Super
 Admin or Admin, or a Team Lead over someone in their own team.
@@ -64,7 +70,7 @@ session. `/login` and `/change-password` sit outside it.
 | `/policies` | all | Read published leave policy and holiday calendar |
 | `/hr-contacts` | all | Manager and HR contact cards |
 | `/team` | lead+ | Roster, create employee, bulk import, password activity, delete |
-| `/admin/policies` | super_admin | Publish policy documents, archive/delete leave types |
+| `/admin/policies` | super_admin, admin with `policies.publish` | Publish policy documents, archive/delete leave types |
 | `/admin/tweaks` | super_admin | Preview and set design-system defaults |
 | `/admin/cleanup` | super_admin | Bulk removal of seeded and test data |
 
