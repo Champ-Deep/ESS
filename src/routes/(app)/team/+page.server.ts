@@ -488,7 +488,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 	if (hasCap(user, 'people.password_activity')) {
 		const entries = await getPasswordActivity();
 		const involvedIds = [
-			...new Set(entries.flatMap((e) => [e.actorUserId, e.targetId].filter((id): id is string => Boolean(id))))
+			...new Set(entries.flatMap((e) => [e.actorUserId, e.targetId].filter((id): id is string => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id ?? ''))))
 		];
 		const involvedUsers =
 			involvedIds.length > 0

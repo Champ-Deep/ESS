@@ -145,7 +145,9 @@ export const load: PageServerLoad = async ({ locals }) => {
 		// Mongo down: the overview still works, just without the activity list.
 	}
 
-	const actorIds = [...new Set(entries.map((e) => e.actorUserId).filter(Boolean))];
+	// Only real user ids reach Postgres: background jobs log as "system", and
+	// one such entry in the list made every Admin Controls visit a 500.
+	const actorIds = [...new Set(entries.map((e) => e.actorUserId).filter((id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id ?? '')))];
 	const actors = actorIds.length ? await db.select({ id: users.id, fullName: users.fullName, email: users.email, hidden: users.hidden }).from(users).where(inArray(users.id, actorIds)) : [];
 	const byId = new Map(actors.map((a) => [a.id, a]));
 
@@ -159,7 +161,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 				action: e.action,
 				title,
 				meta,
-				actorName: who?.fullName ?? 'Someone no longer on file',
+				actorName: who?.fullName ?? (e.actorUserId === 'system' ? 'Champ HR (automatic)' : 'Someone no longer on file'),
 				actorEmail: who?.email ?? ''
 			};
 		})

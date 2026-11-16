@@ -663,7 +663,7 @@ const searchAudit: Tool = {
 			details?: Record<string, unknown>;
 			createdAt: Date;
 		}[];
-		const ids = [...new Set(entries.flatMap((e) => [e.actorUserId, e.targetId].filter(Boolean) as string[]))];
+		const ids = [...new Set(entries.flatMap((e) => [e.actorUserId, e.targetId].filter((id): id is string => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id ?? ''))))];
 		const names = ids.length ? new Map((await db.select({ id: users.id, n: users.fullName }).from(users).where(inArray(users.id, ids))).map((r) => [r.id, r.n])) : new Map();
 		return {
 			data: entries.map((e) => ({
