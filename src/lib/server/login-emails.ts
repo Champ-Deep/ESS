@@ -431,7 +431,17 @@ export async function changeLoginEmail(actor: SessionUser, userId: string, newEm
 	let clerkNote: string | null = null;
 	if (clerkConfigured()) {
 		try {
-			if (u.clerkUserId) {
+			// The new address may already have its own Clerk account (they signed
+			// in with it before the portal knew it). If nobody in the portal is
+			// linked to that account, link this login to it.
+			const { data: existing } = await clerk().users.getUserList({ emailAddress: [email] });
+			const other = existing.find((c) => c.id !== u.clerkUserId);
+			if (other) {
+				const [holder] = await db.select({ id: users.id, fullName: users.fullName }).from(users).where(eq(users.clerkUserId, other.id)).limit(1);
+				if (holder && holder.id !== u.id) throw new Error(`that address’s Clerk account belongs to ${holder.fullName}`);
+				await db.update(users).set({ clerkUserId: other.id }).where(eq(users.id, u.id));
+				await clerk().users.updateUser(other.id, { externalId: u.id });
+			} else if (u.clerkUserId) {
 				const cu = await clerk().users.getUser(u.clerkUserId);
 				const added = await clerk().emailAddresses.createEmailAddress({ userId: u.clerkUserId, emailAddress: email, verified: true, primary: true });
 				for (const e of cu.emailAddresses) if (e.id !== added.id) await clerk().emailAddresses.deleteEmailAddress(e.id).catch(() => {});
