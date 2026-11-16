@@ -1,4 +1,5 @@
 import type { PageServerLoad } from './$types';
+import { monthlyLeave } from '$lib/server/monthly-leave';
 import { db } from '$lib/server/db/postgres';
 import {
 	leaveApplications,
@@ -113,9 +114,15 @@ export const load: PageServerLoad = async ({ locals }) => {
 	// gender-restricted one should never reach someone it does not apply to.
 	// Filtered on read as well as on write, so rows created before those rules
 	// existed stop being shown rather than waiting on a cleanup.
-	const allocations = allocationRows.filter(
-		(r) => r.type.monthlyQuotaDays == null && !r.type.genderEligibility
-	);
+	// Each balance is shown for this month only, never as a year total
+	// (src/lib/server/monthly-leave.ts).
+	const myMonth = new Map(((await monthlyLeave([user.id])).get(user.id) ?? []).map((f) => [f.typeId, f]));
+	const allocations = allocationRows
+		.filter((r) => r.type.monthlyQuotaDays == null && !r.type.genderEligibility)
+		.map((r) => {
+			const m = myMonth.get(r.type.id);
+			return { ...r, month: { credited: m?.credited ?? 0, used: m ? Math.round((m.taken + m.booked) * 100) / 100 : 0, left: m?.left ?? 0 } };
+		});
 
 	// Monthly-quota leave (pink leave) has no allocation row — its entitlement
 	// refreshes each month and doesn't accumulate — so its balance is computed
@@ -269,13 +276,9 @@ export const load: PageServerLoad = async ({ locals }) => {
 	// leave type, so the reviewer sees what the decision does to it. Monthly-quota
 	// types hold no balance and are left out rather than shown as 0.
 	const queueIds = [...new Set(approvalQueue.map((r) => r.applicant.id))];
-	const queueAllocations = queueIds.length
-		? await db
-				.select({ userId: leaveAllocations.userId, leaveTypeId: leaveAllocations.leaveTypeId, allocatedDays: leaveAllocations.allocatedDays, usedDays: leaveAllocations.usedDays })
-				.from(leaveAllocations)
-				.where(and(inArray(leaveAllocations.userId, queueIds), eq(leaveAllocations.year, year)))
-		: [];
-	const remainingFor = new Map(queueAllocations.map((a) => [`${a.userId}:${a.leaveTypeId}`, Number(a.allocatedDays) - Number(a.usedDays)]));
+	// This month's figure, like every balance in the portal.
+	const remainingFor = new Map<string, number>();
+	for (const [uid, figures] of await monthlyLeave(queueIds)) for (const f of figures) remainingFor.set(`${uid}:${f.typeId}`, f.left);
 	const queuePictures = await getUsersWithProfilePicture([...queueIds, ...decidedQueue.map((r) => r.applicant.id)]);
 	const approvalQueueView = approvalQueue.map((r) => ({
 		...r,

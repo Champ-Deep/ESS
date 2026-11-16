@@ -1,4 +1,5 @@
 import { attendanceWindow, buildAttendanceHeatmap } from '$lib/dashboard-analytics';
+import { monthlyLeave } from '$lib/server/monthly-leave';
 import { isEarnedLeave } from '$lib/earned-leave';
 import { tenureFrom } from '$lib/tenure';
 import type { PageServerLoad } from './$types';
@@ -36,6 +37,8 @@ function dateKey(value: string | Date): string {
 	return String(value).slice(0, 10);
 }
 
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
 export const load: PageServerLoad = async ({ locals, url }) => {
 	const user = locals.user!;
 	const year = new Date().getFullYear();
@@ -48,15 +51,12 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		.from(leaveAllocations)
 		.where(and(eq(leaveAllocations.userId, user.id), eq(leaveAllocations.year, year)));
 
-	// "Leave balance" is Earned Leave only, as accrued up to this month
-	// (src/lib/earned-leave.ts); the other types have their own figures.
-	const typeRows = allocations.length
-		? await db.select({ id: leaveTypes.id, code: leaveTypes.code, name: leaveTypes.name }).from(leaveTypes).where(inArray(leaveTypes.id, allocations.map((a) => a.leaveTypeId)))
-		: [];
-	const earnedIds = new Set(typeRows.filter(isEarnedLeave).map((t) => t.id));
-	const earned = allocations.filter((a) => earnedIds.has(a.leaveTypeId));
-	const leaveBalance = earned.reduce((sum, a) => sum + (Number(a.allocatedDays) - Number(a.usedDays)), 0);
-	const leaveAllocated = earned.reduce((sum, a) => sum + Number(a.allocatedDays), 0);
+	// "Leave balance" is Earned Leave, this month only: what the month credits
+	// less what is taken or booked in it (src/lib/server/monthly-leave.ts).
+	const earnedThisMonth = ((await monthlyLeave([user.id])).get(user.id) ?? []).find((f) => isEarnedLeave(f));
+	const leaveBalance = earnedThisMonth?.left ?? 0;
+	const leaveAllocated = earnedThisMonth?.credited ?? 0;
+	const leaveTakenThisMonth = round2((earnedThisMonth?.taken ?? 0) + (earnedThisMonth?.booked ?? 0));
 
 	const pendingLeaveCount = await db
 		.select({ count: sql<number>`count(*)` })
@@ -301,6 +301,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 			completeDays: monthCells.filter(c => c.complete).length
 		},
 		leaveBalance,
+		leaveTakenThisMonth,
 		leaveAllocated,
 		leaveTypeCount,
 		attendancePct,

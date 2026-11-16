@@ -213,9 +213,9 @@
 			<button type="button" role="tab" class="ess-tab" aria-selected={view === 'insights'} onclick={() => (view = 'insights')}>Timeline &amp; analytics</button>
 		</div>
 		<div class="figures" class:hide={view === 'insights'} role="group" aria-label="At a glance" data-tour="today-figures">
-			<a class="fig" href="/leave" title="Earned leave: {fmtNum(data.leaveAllocated)} days accrued up to this month">
+			<a class="fig" href="/leave" title="Earned leave this month: {fmtNum(data.leaveAllocated)} credited, {fmtNum(data.leaveTakenThisMonth)} taken or booked">
 				<span class="v"><b>{fmtNum(data.leaveBalance)}</b><span>days</span></span>
-				<span class="k">Earned leave balance</span>
+				<span class="k">Earned leave · this month</span>
 			</a>
 			<a class="fig" href="/attendance" title="{data.daysWithCheckIn} of {data.businessDaysSoFar} days with a check-in">
 				<span class="v"><b>{data.attendancePct}</b><span>%</span></span>
@@ -262,7 +262,7 @@
 			</a>
 			<a class="ess-figure" href="/leave">
 				<span class="ess-tile ess-tile--sm"><Calendar size={16} /></span>
-				<div><div class="ess-figure__value">{fmtNum(data.leaveBalance)}<small> days</small></div><div class="ess-figure__label">Earned leave balance{data.leaveAllocated ? ` · of ${fmtNum(data.leaveAllocated)} accrued` : ''}</div></div>
+				<div><div class="ess-figure__value">{fmtNum(data.leaveBalance)}<small> days</small></div><div class="ess-figure__label">Earned leave this month{data.leaveAllocated ? ` · of ${fmtNum(data.leaveAllocated)} credited` : ''}</div></div>
 			</a>
 			<a class="ess-figure" href="/leave">
 				<span class="ess-tile ess-tile--sm ess-tile--warn"><FileText size={16} /></span>

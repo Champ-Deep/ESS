@@ -779,7 +779,7 @@ Delete it anyway? Those employees go back to Sat/Sun week offs until they are gi
 							<th>Shift</th>
 							<th>Week off</th>
 							<th>Today</th>
-							<th class="ess-num" title="Earned leave accrued up to this month, less what is taken">EL left</th>
+							<th class="ess-num" title="Earned leave this month: what the month credits, less what is taken or booked in it">EL this month</th>
 							<th><span class="ess-sr-only">Actions</span></th>
 						</tr>
 					</thead>

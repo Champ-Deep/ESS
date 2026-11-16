@@ -1,4 +1,5 @@
 import type { PageServerLoad } from './$types';
+import { monthlyLeave } from '$lib/server/monthly-leave';
 import { db } from '$lib/server/db/postgres';
 import { leaveTypes, leaveAllocations, leaveApplications, employeeProfiles } from '$lib/server/db/schema';
 import { and, eq, gte, inArray, lte, sql } from 'drizzle-orm';
@@ -47,8 +48,14 @@ export const load: PageServerLoad = async ({ locals }) => {
 		.where(and(eq(leaveAllocations.userId, user.id), eq(leaveAllocations.year, year)));
 
 	const available: Record<string, { remaining: number; total: number; monthly: boolean }> = {};
+	// Shown for this month only, like every balance in the portal; the API
+	// still checks the full balance when the request is sent.
+	const myMonth = new Map(((await monthlyLeave([user.id])).get(user.id) ?? []).map((f) => [f.typeId, f]));
 	for (const a of allocations) {
-		available[a.leaveTypeId] = { remaining: Number(a.allocatedDays) - Number(a.usedDays), total: Number(a.allocatedDays), monthly: false };
+		const m = myMonth.get(a.leaveTypeId);
+		available[a.leaveTypeId] = m
+			? { remaining: m.left, total: m.credited, monthly: true }
+			: { remaining: Number(a.allocatedDays) - Number(a.usedDays), total: Number(a.allocatedDays), monthly: false };
 	}
 	const monthlyTypes = types.filter((t) => t.monthlyQuotaDays != null);
 	if (monthlyTypes.length > 0) {

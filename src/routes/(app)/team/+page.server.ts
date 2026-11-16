@@ -1,4 +1,5 @@
 import { redirect } from '@sveltejs/kit';
+import { monthlyLeave } from '$lib/server/monthly-leave';
 import { isEarnedLeave } from '$lib/earned-leave';
 import { matchShiftGroup } from '$lib/shift-group-match';
 import { isTopReference, topPositionReference, TOP_REFERENCE_SPELLINGS } from '$lib/chief';
@@ -12,15 +13,13 @@ import {
 	teams,
 	attendance,
 	leaveApplications,
-	leaveAllocations,
 	shiftGroups,
 	holidayCalendars,
 	employeeProfiles,
 	bulkImports,
 	bulkImportRows,
 	prohanceDays,
-	customRoles,
-	leaveTypes
+	customRoles
 } from '$lib/server/db/schema';
 import { eq, and, or, inArray, lte, gte, desc, isNotNull, sql } from 'drizzle-orm';
 import { hashPassword } from '$lib/server/auth';
@@ -44,7 +43,6 @@ import {
 } from '$lib/server/bulk-import';
 import { profileValuesFromImport } from '$lib/server/import-profile-fields';
 import { matchName } from '$lib/server/name-match';
-import { ensureLeaveAllocations } from '$lib/server/leave-accrual';
 import { currentRosterByUser, loadAssignableRosters } from '$lib/server/week-off';
 import { describeRoster, rotationSummary } from '$lib/week-off';
 import { isMailerConfigured } from '$lib/server/mailer';
@@ -233,28 +231,14 @@ export const load: PageServerLoad = async ({ locals }) => {
 			and(notHidden, eq(leaveApplications.status, 'pending'), manageable.length ? inArray(leaveApplications.userId, manageable) : sql`false`)
 		);
 
-	const year = new Date().getFullYear();
 	const rosterIds = roster.map((r) => r.id);
-	// Roster balances follow the published policy's accrual, same as the
-	// employee-facing pages.
-	await ensureLeaveAllocations(rosterIds);
-	const allocations =
-		rosterIds.length > 0
-			? await db
-					.select()
-					.from(leaveAllocations)
-					.where(and(inArray(leaveAllocations.userId, rosterIds), eq(leaveAllocations.year, year)))
-			: [];
-	// "Leave left" is Earned Leave only, accrued up to this month.
-	const allocTypeRows = allocations.length
-		? await db.select({ id: leaveTypes.id, code: leaveTypes.code, name: leaveTypes.name }).from(leaveTypes).where(inArray(leaveTypes.id, [...new Set(allocations.map((a) => a.leaveTypeId))]))
-		: [];
-	const earnedTypeIds = new Set(allocTypeRows.filter(isEarnedLeave).map((t) => t.id));
+	// "EL this month": Earned Leave credited this month less taken or booked
+	// (monthlyLeave keeps allocations current first).
+	const monthlyByUser = await monthlyLeave(rosterIds);
 	const balanceByUser = new Map<string, number>();
-	for (const a of allocations) {
-		if (!earnedTypeIds.has(a.leaveTypeId)) continue;
-		const remaining = Number(a.allocatedDays) - Number(a.usedDays);
-		balanceByUser.set(a.userId, (balanceByUser.get(a.userId) ?? 0) + remaining);
+	for (const [userId, figures] of monthlyByUser) {
+		const el = figures.find((f) => isEarnedLeave(f));
+		if (el) balanceByUser.set(userId, el.left);
 	}
 
 	const onLeaveToday =

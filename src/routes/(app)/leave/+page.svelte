@@ -256,14 +256,14 @@
 			{#if data.allocations.length > 0 || data.monthlyBalances.length > 0}
 				<div class="balances">
 					{#each data.allocations as row (row.allocation.id)}
-						{@const remaining = Number(row.allocation.allocatedDays) - Number(row.allocation.usedDays)}
+						{@const remaining = row.month.left}
 						{@const look = typeLook(row.type)}
 						<div class="ess-metric">
 							<span class="ess-tile {look.tone}"><look.icon size={20} strokeWidth={1.75} /></span>
 							<div class="ess-metric__body">
 								<span class="ess-metric__label">{row.type.name}</span>
 								<span class="ess-metric__value">{fmtDays(remaining)}</span>
-								<span class="ess-metric__meta">out of {fmtDays(row.allocation.allocatedDays)}</span>
+								<span class="ess-metric__meta">out of {fmtDays(row.month.credited)} this month</span>
 							</div>
 						</div>
 					{/each}
@@ -422,12 +422,12 @@
 			{#if data.allocations.length > 0 || data.monthlyBalances.length > 0}
 				<section class="ess-card usage-card">
 					<div class="ess-card-head">
-						<h2 class="ess-h2">Leave usage</h2>
+						<h2 class="ess-h2">Leave usage · this month</h2>
 					</div>
 					<div class="usage">
 						{#each data.allocations as row (row.allocation.id)}
-							{@const total = Number(row.allocation.allocatedDays)}
-							{@const used = Number(row.allocation.usedDays)}
+							{@const total = row.month.credited}
+							{@const used = row.month.used}
 							{@const look = typeLook(row.type)}
 							<div class="usage-row">
 								<span class="ess-tile ess-tile--sm {look.tone}"><look.icon size={17} strokeWidth={1.75} /></span>
@@ -590,7 +590,7 @@
 					<div class="panels">
 						{#if r.balanceBefore != null && after != null}
 							<div class="panel">
-								<span class="panel-title">Leave balance</span>
+								<span class="panel-title">Leave balance · this month</span>
 								<div class="balance-flow">
 									<div><strong class="big">{fmtDays(r.balanceBefore)}</strong><small>Before this request</small></div>
 									<ArrowRight size={18} class="flow-arrow" />

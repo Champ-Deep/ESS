@@ -9,6 +9,7 @@
  * counted separately, and pink leave is a monthly quota with no balance. Run
  * after ensureLeaveAllocations so the accrual is current.
  */
+import { monthlyLeave } from '$lib/server/monthly-leave';
 import { isEarnedLeave } from '$lib/earned-leave';
 import { db } from '$lib/server/db/postgres';
 import {
@@ -128,6 +129,19 @@ export async function loadMyLeave(user: SessionUser, now = new Date()): Promise<
 		});
 	}
 	balances.sort((x, y) => x.name.localeCompare(y.name));
+
+	// Shown month by month, never as a year total: each type's figures become
+	// this month's (src/lib/server/monthly-leave.ts).
+	const thisMonth = new Map(((await monthlyLeave([user.id], now)).get(user.id) ?? []).map((f) => [f.typeId, f]));
+	for (const b of balances) {
+		const m = thisMonth.get(b.typeId);
+		if (!m) continue;
+		b.allocated = m.credited;
+		b.taken = m.taken;
+		b.scheduled = m.booked;
+		b.pending = m.pending;
+		b.free = round2(m.left - m.pending);
+	}
 
 	// The headline is Earned Leave as accrued to date; "Free by type" still lists every type.
 	const earnedBalances = balances.filter((b) => isEarnedLeave(b));
