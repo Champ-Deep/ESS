@@ -9,6 +9,7 @@
  * counted separately, and pink leave is a monthly quota with no balance. Run
  * after ensureLeaveAllocations so the accrual is current.
  */
+import { isEarnedLeave } from '$lib/earned-leave';
 import { db } from '$lib/server/db/postgres';
 import {
 	leaveAllocations,
@@ -128,8 +129,10 @@ export async function loadMyLeave(user: SessionUser, now = new Date()): Promise<
 	}
 	balances.sort((x, y) => x.name.localeCompare(y.name));
 
+	// The headline is Earned Leave as accrued to date; "Free by type" still lists every type.
+	const earnedBalances = balances.filter((b) => isEarnedLeave(b));
 	const sum = (k: 'allocated' | 'taken' | 'scheduled' | 'pending' | 'free') =>
-		round2(balances.reduce((s, b) => s + b[k], 0));
+		round2(earnedBalances.reduce((s, b) => s + b[k], 0));
 
 	// --- Monthly quota (pink leave), only for those it applies to ---
 	const { start: monthStart, end: monthEnd } = monthBounds(parseKey(today));

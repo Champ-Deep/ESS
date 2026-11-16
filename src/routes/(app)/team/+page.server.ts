@@ -1,4 +1,5 @@
 import { redirect } from '@sveltejs/kit';
+import { isEarnedLeave } from '$lib/earned-leave';
 import { matchShiftGroup } from '$lib/shift-group-match';
 import { isTopReference, topPositionReference, TOP_REFERENCE_SPELLINGS } from '$lib/chief';
 import { isNoLoginEmail } from '$lib/no-login';
@@ -18,7 +19,8 @@ import {
 	bulkImports,
 	bulkImportRows,
 	prohanceDays,
-	customRoles
+	customRoles,
+	leaveTypes
 } from '$lib/server/db/schema';
 import { eq, and, or, inArray, lte, gte, desc, isNotNull, sql } from 'drizzle-orm';
 import { hashPassword } from '$lib/server/auth';
@@ -243,8 +245,14 @@ export const load: PageServerLoad = async ({ locals }) => {
 					.from(leaveAllocations)
 					.where(and(inArray(leaveAllocations.userId, rosterIds), eq(leaveAllocations.year, year)))
 			: [];
+	// "Leave left" is Earned Leave only, accrued up to this month.
+	const allocTypeRows = allocations.length
+		? await db.select({ id: leaveTypes.id, code: leaveTypes.code, name: leaveTypes.name }).from(leaveTypes).where(inArray(leaveTypes.id, [...new Set(allocations.map((a) => a.leaveTypeId))]))
+		: [];
+	const earnedTypeIds = new Set(allocTypeRows.filter(isEarnedLeave).map((t) => t.id));
 	const balanceByUser = new Map<string, number>();
 	for (const a of allocations) {
+		if (!earnedTypeIds.has(a.leaveTypeId)) continue;
 		const remaining = Number(a.allocatedDays) - Number(a.usedDays);
 		balanceByUser.set(a.userId, (balanceByUser.get(a.userId) ?? 0) + remaining);
 	}

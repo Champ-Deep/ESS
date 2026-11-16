@@ -1,4 +1,5 @@
 import { attendanceWindow, buildAttendanceHeatmap } from '$lib/dashboard-analytics';
+import { isEarnedLeave } from '$lib/earned-leave';
 import { tenureFrom } from '$lib/tenure';
 import type { PageServerLoad } from './$types';
 import { db } from '$lib/server/db/postgres';
@@ -47,8 +48,15 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		.from(leaveAllocations)
 		.where(and(eq(leaveAllocations.userId, user.id), eq(leaveAllocations.year, year)));
 
-	const leaveBalance = allocations.reduce((sum, a) => sum + (Number(a.allocatedDays) - Number(a.usedDays)), 0);
-	const leaveAllocated = allocations.reduce((sum, a) => sum + Number(a.allocatedDays), 0);
+	// "Leave balance" is Earned Leave only, as accrued up to this month
+	// (src/lib/earned-leave.ts); the other types have their own figures.
+	const typeRows = allocations.length
+		? await db.select({ id: leaveTypes.id, code: leaveTypes.code, name: leaveTypes.name }).from(leaveTypes).where(inArray(leaveTypes.id, allocations.map((a) => a.leaveTypeId)))
+		: [];
+	const earnedIds = new Set(typeRows.filter(isEarnedLeave).map((t) => t.id));
+	const earned = allocations.filter((a) => earnedIds.has(a.leaveTypeId));
+	const leaveBalance = earned.reduce((sum, a) => sum + (Number(a.allocatedDays) - Number(a.usedDays)), 0);
+	const leaveAllocated = earned.reduce((sum, a) => sum + Number(a.allocatedDays), 0);
 
 	const pendingLeaveCount = await db
 		.select({ count: sql<number>`count(*)` })
