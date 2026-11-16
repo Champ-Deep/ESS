@@ -58,6 +58,31 @@
 		const t = q.trim().toLowerCase();
 		return !t || r.fullName.toLowerCase().includes(t) || r.email.toLowerCase().includes(t) || (r.sendTo ?? '').toLowerCase().includes(t);
 	};
+	/* ---------- change a mistyped email, then send ---------- */
+	let editingEmail = $state<string | null>(null);
+	let newEmail = $state('');
+	async function changeEmail(p: Person, sendNow: boolean) {
+		busy = true;
+		message = null;
+		const r = await fetch('/api/admin/login-emails', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'change_email', userId: p.id, email: newEmail, sendNow }) });
+		const body = await r.json().catch(() => ({}));
+		busy = false;
+		if (!r.ok) {
+			message = { tone: 'bad', text: body.message ?? 'That did not work' };
+			return;
+		}
+		const results = (body.results ?? []) as { fullName: string; outcome: string; note: string | null }[];
+		const sendText = sendNow
+			? results.some((x) => x.outcome === 'sent')
+				? ` Login details sent to ${newEmail.trim().toLowerCase()}.`
+				: ` Not sent: ${body.sendError ?? results[0]?.note ?? 'nothing to send'}.`
+			: '';
+		message = { tone: body.clerk ? 'bad' : 'ok', text: `${body.message}${sendText}${body.clerk ? ` ${body.clerk}` : ''}` };
+		editingEmail = null;
+		q = newEmail.trim().toLowerCase();
+		await load();
+	}
+
 	const STATUS: Record<string, string> = { pending: 'Waiting for approval', approved: 'Approved, in the queue', sending: 'Sending', sent: 'Sent', failed: "Couldn't send", cancelled: 'Cancelled', skipped: 'Skipped' };
 
 	const UNIT = { seconds: 1, minutes: 60, hours: 3600 } as const;
@@ -201,9 +226,26 @@
 									<td><strong>{p.fullName}</strong><br /><small class="muted">{p.email}{p.mustChange ? '' : ' · has signed in'}{p.isActive ? '' : ' · login closed'}</small></td>
 									<td>{p.lastStatus ? `${STATUS[p.lastStatus] ?? p.lastStatus}${p.lastAt ? ` · ${when(p.lastAt)}` : ''}` : 'Never queued'}{#if p.lastError}<br /><small class="err">{p.lastError}</small>{/if}</td>
 									<td class="right">
+										<button type="button" class="ess-btn ess-btn--ghost ess-btn--sm" disabled={busy} onclick={() => { editingEmail = editingEmail === p.id ? null : p.id; newEmail = p.email; }}>Change email</button>
 										<button type="button" class="ess-btn ess-btn--primary ess-btn--sm" disabled={busy || !p.isActive} onclick={() => act('send_now_people', [], { userIds: [p.id] })}><Send size={14} /> Send login email now</button>
 									</td>
 								</tr>
+								{#if editingEmail === p.id}
+									<tr class="edit-email">
+										<td colspan="3">
+											<form class="email-form" onsubmit={(e) => { e.preventDefault(); void changeEmail(p, true); }}>
+												<label class="ess-field">
+													<span class="ess-label">Correct email for {p.fullName} (also their username)</span>
+													<input class="ess-input" type="email" required bind:value={newEmail} />
+												</label>
+												<button type="submit" class="ess-btn ess-btn--primary ess-btn--sm" disabled={busy || !newEmail.trim() || newEmail.trim().toLowerCase() === p.email}><Send size={14} /> Save and send login details</button>
+												<button type="button" class="ess-btn ess-btn--secondary ess-btn--sm" disabled={busy || !newEmail.trim() || newEmail.trim().toLowerCase() === p.email} onclick={() => changeEmail(p, false)}>Save only</button>
+												<button type="button" class="ess-btn ess-btn--ghost ess-btn--sm" onclick={() => (editingEmail = null)}>Cancel</button>
+											</form>
+											<p class="ess-help">Was {p.email}. They sign in with the new address from now on{p.mustChange ? '' : '; their own password stays the same'}.</p>
+										</td>
+									</tr>
+								{/if}
 							{/each}
 						</tbody>
 					</table>
@@ -310,7 +352,7 @@
 									<td><input type="checkbox" aria-label="Select {r.fullName}" checked={picked.includes(r.id)} onchange={(e) => toggle(r.id, e.currentTarget.checked)} /></td>
 									<td><strong>{r.fullName}</strong></td>
 									<td>{r.sendTo ?? r.email}</td>
-									<td class="err">{r.error}</td>
+									<td class="err">{r.error} <button type="button" class="ess-link as-link" onclick={() => (q = r.fullName)}>Wrong email? Fix it</button></td>
 								</tr>
 							{/each}
 						</tbody>
@@ -347,6 +389,23 @@
 <style>
 	.find {
 		max-width: 520px;
+	}
+	.email-form {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: flex-end;
+		gap: 8px;
+	}
+	.email-form .ess-field {
+		flex: 1 1 320px;
+	}
+	.as-link {
+		border: none;
+		background: none;
+		padding: 0;
+		font: inherit;
+		font-size: 12.5px;
+		cursor: pointer;
 	}
 	.muted {
 		color: var(--ess-text-muted);

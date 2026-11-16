@@ -5,7 +5,8 @@ import type { SessionUser } from '$lib/server/auth';
 import { hasCap } from '$lib/server/capabilities';
 import { logActivity } from '$lib/server/db/mongo';
 import { isMailerConfigured, sendWelcomeEmail } from '$lib/server/mailer';
-import { clerkAuthActive } from '$lib/server/clerk';
+import { clerk, clerkAuthActive, clerkConfigured, ensureClerkAccount } from '$lib/server/clerk';
+import { isNoLoginEmail } from '$lib/no-login';
 import { postToFeed } from '$lib/server/chat/cards';
 import { notHidden } from '$lib/server/hidden-users';
 
@@ -398,4 +399,50 @@ export async function searchLoginPeople(q: string) {
 		...r,
 		lastAt: r.lastAt ? new Date(r.lastAt).toISOString() : null
 	}));
+}
+
+/* ---------- correcting a login email ---------- */
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+/**
+ * Login delivery › Change email: a mistyped address from the HR sheet is
+ * corrected here, so the login details (and, with Clerk, the sign-in codes)
+ * reach the person. The email is also their username. In Clerk the new
+ * address becomes the account's verified primary and the old one is removed;
+ * an account that doesn't exist yet is created with the new address.
+ */
+export async function changeLoginEmail(actor: SessionUser, userId: string, newEmail: string): Promise<{ ok: true; message: string; clerk: string | null } | { ok: false; message: string }> {
+	const denied = gate(actor);
+	if (denied) return denied as { ok: false; message: string };
+	const email = newEmail.trim().toLowerCase();
+	if (!EMAIL.test(email) || isNoLoginEmail(email)) return { ok: false, message: 'Type a full email address, like name@championsmail.com' };
+	const [u] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+	if (!u || u.hidden) return { ok: false, message: 'That person is not on the roster' };
+	if (u.role === 'super_admin' && actor.role !== 'super_admin') return { ok: false, message: 'Only a Super Admin can change a Super Admin’s email' };
+	if (u.email === email) return { ok: true, message: 'That is already their email.', clerk: null };
+	const [taken] = await db.select({ fullName: users.fullName }).from(users).where(eq(users.email, email)).limit(1);
+	if (taken) return { ok: false, message: `${email} already belongs to ${taken.fullName}` };
+
+	const old = u.email;
+	await db.update(users).set({ email, updatedAt: new Date() }).where(eq(users.id, u.id));
+
+	// Clerk: move the account to the new address so sign-in codes go there too.
+	let clerkNote: string | null = null;
+	if (clerkConfigured()) {
+		try {
+			if (u.clerkUserId) {
+				const cu = await clerk().users.getUser(u.clerkUserId);
+				const added = await clerk().emailAddresses.createEmailAddress({ userId: u.clerkUserId, emailAddress: email, verified: true, primary: true });
+				for (const e of cu.emailAddresses) if (e.id !== added.id) await clerk().emailAddresses.deleteEmailAddress(e.id).catch(() => {});
+			} else {
+				await ensureClerkAccount(u.id);
+			}
+		} catch (err) {
+			clerkNote = `The portal is updated, but Clerk refused the change (${err instanceof Error ? err.message.slice(0, 160) : 'unknown error'}). Their sign-in may still use the old address.`;
+			console.error('[clerk] email change failed for', u.id, err);
+		}
+	}
+	await logActivity({ actorUserId: actor.id, action: 'user.email_change', targetType: 'user', targetId: u.id, details: { from: old, to: email, clerk: clerkNote ? 'failed' : 'ok' } }).catch(() => {});
+	return { ok: true, message: `${u.fullName}’s email is now ${email} (was ${old}).`, clerk: clerkNote };
 }
