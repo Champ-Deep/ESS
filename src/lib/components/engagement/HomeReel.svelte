@@ -11,13 +11,22 @@
 	import { DEFAULT_BRAND, motionTemplate, totalSeconds, type BrandKit, type SlotValues } from '$lib/motion/templates';
 
 	/**
-	 * The Home page's "live" reel: today's celebrations (birthdays, work and
-	 * wedding anniversaries, from the Engagement studio's templates) and the
-	 * studio's short reels. A small vertical card plays muted in the corner;
-	 * tapping it opens a full reel viewer with sound. Videos stream from the
-	 * portal itself (/api/engagement/media). Nothing shows on a day with
-	 * nothing to show.
+	 * The "live" reel: today's celebrations (birthdays, work and wedding
+	 * anniversaries, from the Engagement studio's templates) and the studio's
+	 * short reels. Videos stream from the portal itself (/api/engagement/media).
+	 * Nothing shows on a day with nothing to show.
+	 *
+	 * - variant "card" (Today page, inside Future events): a small vertical card
+	 *   plays muted over Future events, only while there is something not yet
+	 *   seen. Once watched or tucked away it stays a small LIVE button in the
+	 *   card's header, to watch again.
+	 * - variant "float" (every other page): a LIVE bubble bottom left, only
+	 *   while there is something not yet seen; it never opens by itself.
+	 *
+	 * "Seen" is kept in this browser (localStorage), so the reel does not open
+	 * again on every visit.
 	 */
+	let { variant = 'float' }: { variant?: 'float' | 'card' } = $props();
 	type Motion = { templateId: string; values: SlotValues } | null;
 	type Item =
 		| { key: string; type: 'celebration'; kind: string; headline: string; message: string; theme: string; mediaUrl: string | null; motion: Motion; isYou: boolean }
@@ -31,7 +40,24 @@
 	let items = $state<Item[]>([]);
 	let index = $state(0);
 	let open = $state(false);
-	let small = $state(false);
+	let small = $state(true);
+	const SEEN_KEY = 'essReelSeen';
+	let seen = $state<Set<string>>(new Set());
+	const unseen = $derived(items.some((it) => !seen.has(it.key)));
+	function markSeen() {
+		if (items.every((it) => seen.has(it.key))) return;
+		seen = new Set([...seen, ...items.map((it) => it.key)]);
+		try {
+			localStorage.setItem(SEEN_KEY, JSON.stringify([...seen].slice(-200)));
+		} catch {
+			/* storage blocked */
+		}
+	}
+	/** Keeps the full viewer out of the card, which clips and stacks it. */
+	function portal(node: HTMLElement) {
+		document.body.appendChild(node);
+		return { destroy: () => node.remove() };
+	}
 	let muted = $state(true);
 	let progress = $state(0);
 	let video = $state<HTMLVideoElement | null>(null);
@@ -41,7 +67,8 @@
 
 	onMount(() => {
 		try {
-			small = sessionStorage.getItem('essReelSmall') === '1';
+			const raw = JSON.parse(localStorage.getItem(SEEN_KEY) ?? '[]');
+			if (Array.isArray(raw)) seen = new Set(raw.map(String));
 		} catch {
 			/* storage blocked */
 		}
@@ -50,17 +77,15 @@
 			.then((b: { items: Item[]; brand?: BrandKit }) => {
 				items = b.items ?? [];
 				if (b.brand) brand = b.brand;
+				// Plays by itself only on the Today page, and only with something new.
+				small = variant === 'float' || items.every((it) => seen.has(it.key));
 			})
 			.catch(() => {});
 	});
 
 	function setSmall(v: boolean) {
 		small = v;
-		try {
-			sessionStorage.setItem('essReelSmall', v ? '1' : '0');
-		} catch {
-			/* storage blocked */
-		}
+		if (v) markSeen();
 	}
 
 	function go(to: number) {
@@ -112,6 +137,7 @@
 	function closeViewer() {
 		open = false;
 		muted = true;
+		setSmall(true);
 	}
 
 	function onKey(e: KeyboardEvent) {
@@ -160,26 +186,34 @@
 	</div>
 {/snippet}
 
+{#if item && variant === 'card' && (small || open)}
+	<button type="button" class="pill" class:fresh={unseen} onclick={openViewer} aria-label="Watch the live reel: {label(item)}" title="Watch again" data-tour="home-reel">
+		<span class="dot"></span>LIVE{#if items.length > 1}<span class="n">{items.length}</span>{/if}
+	</button>
+{/if}
+
 {#if item && !open}
-	{#if small}
-		<button type="button" class="bubble" onclick={() => setSmall(false)} aria-label="Show the live reel: {label(item)}" data-tour="home-reel">
-			<span class="ring"></span>
-			<span class="live">LIVE</span>
-		</button>
-	{:else}
+	{#if variant === 'float'}
+		{#if unseen}
+			<button type="button" class="bubble" onclick={openViewer} aria-label="Watch the live reel: {label(item)}">
+				<span class="ring"></span>
+				<span class="live">LIVE</span>
+			</button>
+		{/if}
+	{:else if !small}
 		<div class="mini" data-tour="home-reel">
 			<button type="button" class="mini-hit" onclick={openViewer} aria-label="Watch {label(item)}">
 				{#key item.key}{@render frame(item, false)}{/key}
 			</button>
 			{@render bars()}
 			<span class="live tag"><span class="dot"></span>LIVE</span>
-			<button type="button" class="mini-x" onclick={() => setSmall(true)} aria-label="Shrink the live reel"><Minus size={14} /></button>
+			<button type="button" class="mini-x" onclick={() => setSmall(true)} aria-label="Tuck the live reel away" title="Tuck away (it stays as LIVE above)"><Minus size={14} /></button>
 		</div>
 	{/if}
 {/if}
 
 {#if open && item}
-	<div class="viewer" role="dialog" aria-modal="true" aria-label="Live on Home" tabindex="-1" bind:this={dialog}>
+	<div class="viewer" role="dialog" aria-modal="true" aria-label="Live on Home" tabindex="-1" bind:this={dialog} use:portal>
 		<button type="button" class="backdrop" aria-label="Close" onclick={closeViewer}></button>
 		<div class="stage" ontouchstart={(e) => (touchX = e.touches[0].clientX)} ontouchend={onTouchEnd}>
 			{#key item.key}{@render frame(item, true)}{/key}
@@ -201,12 +235,13 @@
 {/if}
 
 <style>
+	/* Inside Future events: over the card's lower right, below its header. */
 	.mini {
-		position: fixed;
-		left: 22px;
-		bottom: 22px;
-		z-index: 65;
-		width: 128px;
+		position: absolute;
+		right: 14px;
+		bottom: 14px;
+		z-index: 3;
+		height: min(calc(100% - 62px), 250px);
 		aspect-ratio: 9 / 16;
 		border-radius: 18px;
 		overflow: hidden;
@@ -215,6 +250,42 @@
 			0 18px 40px -14px rgba(10, 12, 30, 0.55),
 			0 0 0 3px #fff;
 		animation: pop 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+	}
+	.pill {
+		position: absolute;
+		top: 16px;
+		right: 54px;
+		z-index: 3;
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+		height: 26px;
+		padding: 0 10px;
+		border: none;
+		border-radius: 999px;
+		background: linear-gradient(120deg, #ff3d7f, #7b5cff);
+		color: #fff;
+		font: 700 10.5px/1 var(--ess-font-sans);
+		letter-spacing: 0.08em;
+		cursor: pointer;
+		box-shadow: 0 6px 16px -8px rgba(255, 61, 127, 0.8);
+	}
+	.pill.fresh {
+		animation: glow 1.8s ease-in-out infinite;
+	}
+	.pill:focus-visible {
+		outline: 3px solid var(--ess-primary);
+		outline-offset: 2px;
+	}
+	.pill .n {
+		display: grid;
+		place-items: center;
+		min-width: 16px;
+		height: 16px;
+		padding: 0 4px;
+		border-radius: 999px;
+		background: rgba(255, 255, 255, 0.25);
+		letter-spacing: 0;
 	}
 	.mini-hit {
 		all: unset;
@@ -440,9 +511,7 @@
 	}
 	@media (max-width: 720px) {
 		.mini {
-			width: 96px;
-			left: 72px;
-			bottom: 12px;
+			height: min(calc(100% - 62px), 190px);
 		}
 		.nav {
 			display: none;
@@ -464,6 +533,11 @@
 			transform: scale(1.25);
 		}
 	}
+	@keyframes glow {
+		50% {
+			box-shadow: 0 0 0 5px rgba(255, 61, 127, 0.25);
+		}
+	}
 	@keyframes blink {
 		50% {
 			opacity: 0.3;
@@ -472,6 +546,7 @@
 	@media (prefers-reduced-motion: reduce) {
 		.mini,
 		.stage,
+		.pill,
 		.ring,
 		.dot {
 			animation: none;

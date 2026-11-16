@@ -98,10 +98,10 @@ export const TOUR_STEPS: TourStep[] = [
 		id: 'home-reel',
 		chapter: 'Today',
 		title: 'Live on Home',
-		body: 'On every page, bottom left: birthdays, work anniversaries and short reels from the Engagement team play here, muted. Tap to watch with sound; shrink it to a bubble if you prefer.',
+		body: 'In Future events: birthdays, work anniversaries and short reels from the Engagement team. Something new plays here once, muted; after that it stays a small LIVE button, so you can watch again with sound.',
 		route: '/dashboard',
 		target: 'home-reel',
-		placement: 'right',
+		placement: 'bottom',
 		optional: true
 	},
 	{

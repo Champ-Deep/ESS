@@ -105,9 +105,10 @@
 <!-- Checked in: punch-out reminder at 9h, missed-punch prompt at 9h 30m. -->
 <ShiftReminder />
 
-<!-- Today's celebrations and the Engagement team's reels: the LIVE card,
-     bottom left on every page. -->
-<HomeReel />
+<!-- Today's celebrations and the Engagement team's reels. On Today they live
+     in the Future events card; elsewhere a LIVE bubble, bottom left, while
+     there is something not yet seen. -->
+{#if page.url.pathname !== '/dashboard'}<HomeReel />{/if}
 
 <!-- The guided tour (avatar menu › Take the tour, or ?tour). Outside the
      zoomed shell so its measurements are the screen's own. Not offered
