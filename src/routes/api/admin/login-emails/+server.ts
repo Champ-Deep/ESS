@@ -1,7 +1,7 @@
 import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { requireCap } from '$lib/server/capabilities';
-import { approveLoginEmails, cancelLoginEmails, holdLoginEmails, listLoginEmails, setCadence } from '$lib/server/login-emails';
+import { approveLoginEmails, cancelLoginEmails, holdLoginEmails, listLoginEmails, searchLoginPeople, sendLoginEmailsNow, sendLoginEmailsToPeopleNow, setCadence } from '$lib/server/login-emails';
 
 /**
  * The queue of login emails waiting for approval (src/lib/server/
@@ -12,13 +12,22 @@ const UUID = /^[0-9a-f-]{36}$/i;
 
 export const GET: RequestHandler = async (event) => {
 	requireCap(event, 'people.send_logins');
+	// ?q= finds anyone on the roster (name, email or employee code) to send to.
+	const q = event.url.searchParams.get('q');
+	if (q !== null) return json({ people: await searchLoginPeople(q) });
 	return json(await listLoginEmails());
 };
 
 export const POST: RequestHandler = async (event) => {
 	const actor = requireCap(event, 'people.send_logins');
-	const data = (await event.request.json().catch(() => ({}))) as { action?: string; ids?: unknown; cadenceSeconds?: unknown };
+	const data = (await event.request.json().catch(() => ({}))) as { action?: string; ids?: unknown; userIds?: unknown; cadenceSeconds?: unknown };
 	const ids = Array.isArray(data.ids) ? data.ids.map(String).filter((x) => UUID.test(x)).slice(0, 1000) : [];
+	// Send now / Resend: at once, not at the queue's cadence.
+	if (data.action === 'send_now' || data.action === 'send_now_people') {
+		const userIds = Array.isArray(data.userIds) ? data.userIds.map(String).filter((x) => UUID.test(x)) : [];
+		const r = data.action === 'send_now' ? await sendLoginEmailsNow(actor, ids) : await sendLoginEmailsToPeopleNow(actor, userIds);
+		return r.ok ? json(r) : json({ message: r.message }, { status: 400 });
+	}
 	const r =
 		data.action === 'approve'
 			? await approveLoginEmails(actor, ids)
