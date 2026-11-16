@@ -1,4 +1,6 @@
 import { db } from '$lib/server/db/postgres';
+import { supportTeam } from '$lib/capabilities';
+import { deskTeamOf } from '$lib/support-desk';
 import {
 	chatChannels,
 	chatMembers,
@@ -296,7 +298,7 @@ export async function sendMessage(viewer: SessionUser, input: SendInput): Promis
 				.filter((m) => (m.mutedUntil && m.mutedUntil.getTime() > Date.now()) || m.notify === 'none' || (m.notify === 'mentions' && !mentions.includes(m.userId) && !mentionsAll))
 				.map((m) => m.userId)
 		);
-		const title = c.kind === 'channel' ? `${sender} in #${c.name}` : c.kind === 'desk' ? `${sender} · Ask HR` : sender;
+		const title = c.kind === 'channel' ? `${sender} in #${c.name}` : c.kind === 'desk' ? `${sender} · ${supportTeam(deskTeamOf(c.deskTeam)).deskName}` : sender;
 		void deliverNotification(alertIds.filter((id) => !skip.has(id)), { title, body: snippet, url, kind: c.kind === 'channel' ? 'mention' : c.kind === 'desk' ? 'desk' : 'dm' }).catch(() => {});
 	}
 

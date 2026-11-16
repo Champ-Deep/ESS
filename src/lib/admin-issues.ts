@@ -16,6 +16,8 @@ export type AdminFacts = {
 	withoutManager: number;
 	/** Active people with no shift group (so no holiday calendar), Super Admins excluded. */
 	withoutShift?: number;
+	/** People on the alumni list who have left and can still sign in. */
+	leaversWithLogin?: number;
 	/** Names of people whose chain of managers loops back on itself. */
 	loopMemberNames: string[];
 	/** ISO timestamp of the latest attendance import, device feed or manual. */
@@ -169,6 +171,19 @@ export function deriveAdminIssues(facts: AdminFacts, caps: readonly string[], no
 			tab: 'leave',
 			href: '/leave',
 			cta: 'Open approvals'
+		});
+	}
+
+	if (can('people.alumni') && (facts.leaversWithLogin ?? 0) > 0) {
+		const n = facts.leaversWithLogin ?? 0;
+		issues.push({
+			id: `alumni-open-${n}`,
+			severity: 'warn',
+			title: `${plural(n, 'person who has left still has', 'people who have left still have')} a login`,
+			detail: 'They are on the alumni list but can still sign in. Close their logins from Alumni.',
+			tab: 'alumni',
+			href: '/admin/alumni',
+			cta: 'Review'
 		});
 	}
 

@@ -472,8 +472,9 @@
 	/* ---------- first-visit invite, bottom right ---------- */
 	.tour-invite {
 		position: fixed;
-		right: 24px;
+		left: 50%;
 		bottom: 24px;
+		transform: translateX(-50%);
 		z-index: 70;
 		display: grid;
 		grid-template-columns: auto 1fr;
@@ -516,7 +517,7 @@
 	@keyframes invite-in {
 		from {
 			opacity: 0;
-			transform: translateY(10px);
+			transform: translate(-50%, 10px);
 		}
 	}
 

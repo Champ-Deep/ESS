@@ -1,4 +1,5 @@
 import { db } from '$lib/server/db/postgres';
+import { leaversWithOpenLogin } from '$lib/server/alumni';
 import {
 	attendanceImports,
 	bulkImports,
@@ -124,6 +125,7 @@ export async function loadAdminFacts(now = new Date()): Promise<AdminFacts> {
 		activePeople: roster.length,
 		withoutManager: roster.filter((p) => !p.reportsTo && !p.reportsToChief && p.role !== 'super_admin').length,
 		withoutShift: roster.filter((p) => !p.shiftGroupId && p.role !== 'super_admin').length,
+		leaversWithLogin: await leaversWithOpenLogin().catch(() => 0),
 		loopMemberNames: chart.cycleMemberIds.map((id) => nameById.get(id) ?? 'Unknown'),
 		lastAttendanceImportAt: lastImport?.createdAt.toISOString() ?? null,
 		lastManualUpload: lastManual

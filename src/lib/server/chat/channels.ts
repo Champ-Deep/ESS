@@ -1,5 +1,7 @@
 import { db } from '$lib/server/db/postgres';
-import { chatChannels, chatMembers, users } from '$lib/server/db/schema';
+import { chatChannels, chatMembers, chatMessages, users } from '$lib/server/db/schema';
+import { SUPPORT_TEAMS, supportTeam, type SupportTeamKey } from '$lib/capabilities';
+import { deskTeamOf } from '$lib/support-desk';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { SessionUser } from '$lib/server/auth';
 import { hasCap } from '$lib/server/capabilities';
@@ -35,6 +37,10 @@ export type SidebarChannel = {
 	pinnedAs: 'manager' | 'hr' | null;
 	deskStatus: string | null;
 	deskOwnerId: string | null;
+	/** Which desk: 'hr' | 'engagement' | 'it' (null for anything that isn't one). */
+	deskTeam: SupportTeamKey | null;
+	/** A desk thread nobody has written in yet (kept out of responders' lists). */
+	deskEmpty: boolean;
 	isAdmin: boolean;
 	unread: number;
 	mentions: number;
@@ -48,14 +54,14 @@ export type SidebarChannel = {
  * Everything in one person's sidebar, with unread and mention counts.
  *
  * Also makes sure the conversations everyone is meant to have exist: their
- * ESS notices feed, their #ask-hr thread (for anyone who is not HR), and DMs
- * with their reporting manager and concerned HR.
+ * ESS notices feed, their Ask HR, Ask IT and Ask Engagement threads (each for
+ * anyone who doesn't answer that desk), and DMs with their reporting manager
+ * and concerned HR.
  */
 export async function sidebarFor(user: SessionUser): Promise<{ channels: SidebarChannel[]; badge: number }> {
 	const [me] = await loadPeople([user.id]);
-	const isHr = hasCap(user, 'chat.hr_desk');
 	await ensureSystemFeed(user.id);
-	if (!isHr) await ensureDesk(user.id);
+	for (const t of SUPPORT_TEAMS) if (!hasCap(user, t.deskCap)) await ensureDesk(user.id, t.key);
 	const pinned = new Map<string, 'manager' | 'hr'>();
 	if (me?.reportsTo) {
 		const [mgr] = await loadPeople([me.reportsTo]);
@@ -102,6 +108,14 @@ export async function sidebarFor(user: SessionUser): Promise<{ channels: Sidebar
 				.where(and(inArray(chatMembers.channelId, convIds), sql`${chatMembers.userId} <> ${user.id}`, notHidden))
 		: [];
 
+	// Desks with at least one message; the rest stay out of responders' lists.
+	const deskIds = rows.filter((r) => r.c.kind === 'desk').map((r) => r.c.id);
+	const spoken = new Set(
+		deskIds.length
+			? (await db.selectDistinct({ id: chatMessages.channelId }).from(chatMessages).where(inArray(chatMessages.channelId, deskIds))).map((r) => r.id)
+			: []
+	);
+
 	const announcementBadge = await loadBadge(user.id);
 	const now = Date.now();
 
@@ -121,6 +135,8 @@ export async function sidebarFor(user: SessionUser): Promise<{ channels: Sidebar
 			pinnedAs: pinned.get(c.id) ?? null,
 			deskStatus: c.deskStatus,
 			deskOwnerId: c.deskOwnerId,
+			deskTeam: c.kind === 'desk' ? deskTeamOf(c.deskTeam) : null,
+			deskEmpty: c.kind === 'desk' && !spoken.has(c.id),
 			isAdmin: m.role === 'admin',
 			unread: isAnnouncements ? announcementBadge.count : (cnt?.unread ?? 0),
 			mentions: isAnnouncements ? (announcementBadge.urgent ? 1 : 0) : (cnt?.mentions ?? 0),
@@ -298,7 +314,11 @@ export async function setMute(user: SessionUser, channelId: string, muted: boole
 }
 
 export async function setDeskStatus(user: SessionUser, channelId: string, status: 'open' | 'resolved'): Promise<{ ok: true } | Fail> {
-	if (!hasCap(user, 'chat.hr_desk')) return { ok: false, message: 'Only HR can resolve Ask HR threads' };
+	const [c] = await db.select({ kind: chatChannels.kind, deskTeam: chatChannels.deskTeam }).from(chatChannels).where(eq(chatChannels.id, channelId)).limit(1);
+	if (!c || c.kind !== 'desk') return { ok: false, message: 'That is not a desk question' };
+	// Resolved by the team the desk belongs to: IT closes Ask IT, HR Ask HR.
+	const team = supportTeam(deskTeamOf(c.deskTeam));
+	if (!hasCap(user, team.deskCap)) return { ok: false, message: `Only ${team.name} can resolve ${team.deskName} questions` };
 	const m = await membership(channelId, user.id);
 	if (!m) return { ok: false, message: 'You are not on this thread' };
 	await db.update(chatChannels).set({ deskStatus: status }).where(and(eq(chatChannels.id, channelId), eq(chatChannels.kind, 'desk')));

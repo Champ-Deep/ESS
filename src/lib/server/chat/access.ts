@@ -1,5 +1,7 @@
 import { db } from '$lib/server/db/postgres';
-import { chatChannels, chatMembers, employeeProfiles, users } from '$lib/server/db/schema';
+import { chatChannels, chatMembers, employeeProfiles, supportTeamMembers, users } from '$lib/server/db/schema';
+import { supportTeam, type SupportTeamKey } from '$lib/capabilities';
+import { deskResponderIds, deskUniqueKey } from '$lib/support-desk';
 import { and, eq, inArray } from 'drizzle-orm';
 import type { SessionUser } from '$lib/server/auth';
 import { hasCap } from '$lib/server/capabilities';
@@ -135,37 +137,105 @@ export async function ensureSystemFeed(userId: string) {
 	return upsertChannel({ kind: 'system', name: 'ESS', uniqueKey: `system:${userId}`, isPrivate: true, readOnly: true }, [userId]);
 }
 
-/** Who answers a person's #ask-hr thread: their concerned HR, else every desk holder. */
-export async function deskResponders(ownerId: string): Promise<string[]> {
-	const [owner] = await loadPeople([ownerId]);
-	if (owner?.hrUserId && owner.hrUserId !== ownerId) return [owner.hrUserId];
-	const hr = await db
+/** Active, visible members of a support team (HR, Employee Engagement, IT). */
+export async function teamMemberIds(team: SupportTeamKey): Promise<string[]> {
+	const rows = await db
+		.select({ id: users.id })
+		.from(supportTeamMembers)
+		.innerJoin(users, eq(users.id, supportTeamMembers.userId))
+		.where(and(eq(supportTeamMembers.teamKey, team), eq(users.isActive, true), notHidden));
+	return rows.map((r) => r.id);
+}
+
+/** Who answers a desk nobody has been put in the team for: HR admins for Ask HR, Super Admins otherwise. */
+async function fallbackResponders(team: SupportTeamKey): Promise<string[]> {
+	const rows = await db
 		.select({ id: users.id })
 		.from(users)
-		.where(and(eq(users.isActive, true), inArray(users.role, ['admin', 'super_admin']), notHidden));
-	return hr.map((h) => h.id).filter((id) => id !== ownerId);
+		.where(and(eq(users.isActive, true), inArray(users.role, team === 'hr' ? ['admin', 'super_admin'] : ['super_admin']), notHidden));
+	return rows.map((r) => r.id);
+}
+
+/** Who answers a person's desk thread for `team` (rules in src/lib/support-desk.ts). */
+export async function deskResponders(ownerId: string, team: SupportTeamKey = 'hr'): Promise<string[]> {
+	const [[owner], members] = await Promise.all([loadPeople([ownerId]), teamMemberIds(team)]);
+	const concerned = team === 'hr' && owner?.hrUserId ? owner.hrUserId : null;
+	const fallback = members.length || concerned ? [] : await fallbackResponders(team);
+	return deskResponderIds(team, { id: ownerId, hrUserId: concerned }, members, fallback);
 }
 
 /**
- * A person's private thread with HR. They and their concerned HR are members;
- * with no concerned HR set, every HR admin is. Re-run when the concerned HR
- * changes, which adds the new one.
+ * A person's private thread with a support team: Ask HR, Ask IT or Ask
+ * Engagement. They and the team's responders are members. Re-run when the
+ * concerned HR changes, which adds the new one; a change to who is in a team
+ * goes through syncDeskMembers.
  */
-export async function ensureDesk(ownerId: string) {
+export async function ensureDesk(ownerId: string, team: SupportTeamKey = 'hr') {
 	const [owner] = await loadPeople([ownerId]);
-	const responders = await deskResponders(ownerId);
+	const responders = await deskResponders(ownerId, team);
 	const row = await upsertChannel(
 		{
 			kind: 'desk',
-			name: `Ask HR · ${owner?.fullName ?? 'Employee'}`,
-			uniqueKey: `desk:${ownerId}`,
+			name: `${supportTeam(team).deskName} · ${owner?.fullName ?? 'Employee'}`,
+			uniqueKey: deskUniqueKey(team, ownerId),
 			isPrivate: true,
 			deskOwnerId: ownerId,
-			deskStatus: 'open'
+			deskStatus: 'open',
+			deskTeam: team
 		},
 		[ownerId, ...responders]
 	);
 	return row;
+}
+
+/**
+ * After someone joins or leaves a support team: every desk thread of that
+ * team gets exactly its responders. Only members the sync added are ever
+ * removed (never the person asking, nor anyone added by hand), and each
+ * affected person's sidebar is told.
+ */
+export async function syncDeskMembers(team: SupportTeamKey): Promise<void> {
+	const desks = await db
+		.select({ id: chatChannels.id, ownerId: chatChannels.deskOwnerId })
+		.from(chatChannels)
+		.where(and(eq(chatChannels.kind, 'desk'), eq(chatChannels.deskTeam, team)));
+	if (desks.length === 0) return;
+
+	const members = await teamMemberIds(team);
+	const owners = await loadPeople(desks.map((d) => d.ownerId).filter((id): id is string => !!id));
+	const ownerById = new Map(owners.map((o) => [o.id, o]));
+	const needsFallback = members.length === 0;
+	const fallback = needsFallback ? await fallbackResponders(team) : [];
+
+	const deskIds = desks.map((d) => d.id);
+	const current = await db
+		.select({ channelId: chatMembers.channelId, userId: chatMembers.userId, addedBy: chatMembers.addedBy })
+		.from(chatMembers)
+		.where(inArray(chatMembers.channelId, deskIds));
+	const byDesk = new Map<string, typeof current>();
+	for (const m of current) byDesk.set(m.channelId, [...(byDesk.get(m.channelId) ?? []), m]);
+
+	const add: { channelId: string; userId: string; addedBy: string }[] = [];
+	const removeByUser = new Map<string, string[]>();
+	for (const d of desks) {
+		if (!d.ownerId) continue;
+		const owner = ownerById.get(d.ownerId);
+		const concerned = team === 'hr' && owner?.hrUserId ? owner.hrUserId : null;
+		const want = new Set(deskResponderIds(team, { id: d.ownerId, hrUserId: concerned }, members, concerned ? [] : fallback));
+		const have = byDesk.get(d.id) ?? [];
+		for (const id of want) if (!have.some((m) => m.userId === id)) add.push({ channelId: d.id, userId: id, addedBy: 'sync' });
+		for (const m of have) {
+			if (m.userId === d.ownerId || want.has(m.userId) || m.addedBy !== 'sync') continue;
+			removeByUser.set(m.userId, [...(removeByUser.get(m.userId) ?? []), d.id]);
+		}
+	}
+
+	for (let i = 0; i < add.length; i += 500) await db.insert(chatMembers).values(add.slice(i, i + 500)).onConflictDoNothing();
+	for (const [userId, channelIds] of removeByUser) {
+		await db.delete(chatMembers).where(and(eq(chatMembers.userId, userId), inArray(chatMembers.channelId, channelIds)));
+	}
+	const touched = [...new Set([...add.map((a) => a.userId), ...removeByUser.keys()])];
+	if (touched.length) await publish(touched, { type: 'channels.changed', channelId: '' });
 }
 
 export async function membership(channelId: string, userId: string) {

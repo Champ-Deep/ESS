@@ -14,6 +14,10 @@
 	import Palette from '@lucide/svelte/icons/palette';
 	import MessagesSquare from '@lucide/svelte/icons/messages-square';
 	import Video from '@lucide/svelte/icons/video';
+	import Headset from '@lucide/svelte/icons/headset';
+	import GraduationCap from '@lucide/svelte/icons/graduation-cap';
+	import PartyPopper from '@lucide/svelte/icons/party-popper';
+	import Laptop from '@lucide/svelte/icons/laptop';
 	import Search from '@lucide/svelte/icons/search';
 	import ChevronLeft from '@lucide/svelte/icons/chevron-left';
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
@@ -29,11 +33,15 @@
 		overview: LayoutGrid,
 		analytics: ChartColumn,
 		people: Users,
+		alumni: GraduationCap,
+		engagement: PartyPopper,
+		it: Laptop,
 		biometric: Clock,
 		balances: Calendar,
 		policies: FileText,
 		org: Network,
 		access: ShieldCheck,
+		support: Headset,
 		chat: MessagesSquare,
 		zoom: Video,
 		cleanup: DatabaseZap,

@@ -19,6 +19,8 @@ export interface SessionUser {
 	capabilities?: import('$lib/capabilities').CapabilityKey[];
 	/** The named role on top of the base role, if any ("IT Support"). */
 	customRoleName?: string | null;
+	/** Support teams they are in ('hr' | 'engagement' | 'it'), src/lib/capabilities.ts. */
+	supportTeams?: string[];
 }
 
 const ACCESS_TOKEN_TTL_SECONDS = 15 * 60; // 15 min

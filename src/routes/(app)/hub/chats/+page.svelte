@@ -22,7 +22,7 @@
 	import MessageList from '$lib/components/chat/MessageList.svelte';
 	import Composer from '$lib/components/chat/Composer.svelte';
 	import SideSheet from '$lib/components/hub/SideSheet.svelte';
-	import { chat, channelLabel, type SidebarChannel } from '$lib/chat/client.svelte';
+	import { chat, channelLabel, type SidebarChannel, deskWords } from '$lib/chat/client.svelte';
 	import { ago } from '$lib/hub/format';
 
 	/**
@@ -48,6 +48,8 @@
 	const shown = $derived(
 		channels
 			.filter((c) => {
+				// Someone else's desk question nobody has written in yet: nothing to answer.
+				if (c.kind === 'desk' && c.deskOwnerId !== meId && c.deskEmpty) return false;
 				if (q.trim() && !label(c).toLowerCase().includes(q.trim().toLowerCase())) return false;
 				if (filter === 'unread') return bold(c);
 				if (filter === 'mentions') return !c.muted && c.mentions > 0;
@@ -124,7 +126,7 @@
 		if (other && !other.isActive) return `${other.fullName} has left, so this conversation is read-only.`;
 		return null;
 	});
-	const placeholder = $derived(preview ? (preview.kind === 'channel' ? `Message #${preview.name}` : preview.kind === 'desk' ? (preview.deskOwnerId === meId ? 'Ask HR a question' : 'Reply to this question') : `Message ${channelLabel(preview, meId)}`) : 'Message');
+	const placeholder = $derived(preview ? (preview.kind === 'channel' ? `Message #${preview.name}` : preview.kind === 'desk' ? (preview.deskOwnerId === meId ? deskWords(preview).placeholder : 'Reply to this question') : `Message ${channelLabel(preview, meId)}`) : 'Message');
 	let list = $state<ReturnType<typeof MessageList> | null>(null);
 </script>
 
@@ -222,7 +224,7 @@
 				</div>
 			{:else}
 				{#key preview.id}
-					<MessageList bind:this={list} channelId={preview.id} meId={meId} meName={data.hubMe.fullName} {statusOf} emptyText={preview.kind === 'system' ? 'Nothing here yet. Leave requests to approve and decisions on yours will appear here.' : preview.kind === 'desk' ? 'Ask HR anything here. Only you and HR can see it.' : 'No messages yet. Say hello.'} />
+					<MessageList bind:this={list} channelId={preview.id} meId={meId} meName={data.hubMe.fullName} {statusOf} emptyText={preview.kind === 'system' ? 'Nothing here yet. Leave requests to approve and decisions on yours will appear here.' : preview.kind === 'desk' ? deskWords(preview).empty : 'No messages yet. Say hello.'} />
 					<Composer channelId={preview.id} {members} {placeholder} {disabledReason} onsent={(m) => m && list?.upsert([m])} />
 				{/key}
 			{/if}

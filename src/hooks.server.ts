@@ -45,7 +45,7 @@ startClerkAccountSync();
 /** Privileges ride along on the request user (src/lib/capabilities.ts). */
 async function withCapabilities(user: SessionUser): Promise<SessionUser> {
 	const loaded = await loadCapabilities(user);
-	return { ...user, capabilities: loaded.caps, customRoleName: loaded.customRoleName };
+	return { ...user, capabilities: loaded.caps, customRoleName: loaded.customRoleName, supportTeams: loaded.supportTeams };
 }
 
 // Background work (chat notifications, cards, Champ in chat) is started with

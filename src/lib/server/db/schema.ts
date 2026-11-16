@@ -911,6 +911,168 @@ export const announcementReads = pgTable(
 
 // --- Named roles and privileges ---
 
+/**
+ * Engagement studio (Admin Controls › Engagement studio; src/lib/server/engagement.ts).
+ *
+ * Templates: one per celebration the portal shows by itself on the day
+ * (birthday, work anniversary, wedding anniversary): the words, with
+ * placeholders, and an optional short video. Overrides change or skip one
+ * person's celebration on one date. Reels are short videos shown on everyone's
+ * Home page. Video bytes live in MongoDB GridFS (bucket engagement_media),
+ * served by the portal itself; `mediaId` is the GridFS file id.
+ */
+export const engagementTemplates = pgTable(
+	'engagement_templates',
+	{
+		kind: text('kind').primaryKey(),
+		enabled: boolean('enabled').default(true).notNull(),
+		headline: text('headline').notNull(),
+		message: text('message').default('').notNull(),
+		theme: text('theme').default('confetti').notNull(),
+		/** A motion template (src/lib/motion/templates.ts) and its fields, filled per person. */
+		motionTemplate: text('motion_template'),
+		slotValues: jsonb('slot_values').$type<Record<string, string | string[]>>(),
+		mediaId: text('media_id'),
+		mediaMime: text('media_mime'),
+		updatedBy: uuid('updated_by').references((): any => users.id, { onDelete: 'set null' }),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull()
+	},
+	(t) => [check('engagement_templates_kind', sql`${t.kind} in ('birthday', 'work_anniversary', 'wedding_anniversary')`)]
+);
+
+export const engagementOverrides = pgTable(
+	'engagement_overrides',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		kind: text('kind').notNull(),
+		userId: uuid('user_id')
+			.notNull()
+			.references((): any => users.id, { onDelete: 'cascade' }),
+		onDate: date('on_date').notNull(),
+		/** Replaces the template's message for this person on this day. */
+		message: text('message'),
+		/** Not shown at all this time (they asked not to be celebrated, say). */
+		hidden: boolean('hidden').default(false).notNull(),
+		updatedBy: uuid('updated_by').references((): any => users.id, { onDelete: 'set null' }),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull()
+	},
+	(t) => [uniqueIndex('engagement_overrides_once').on(t.kind, t.userId, t.onDate)]
+);
+
+export const engagementReels = pgTable('engagement_reels', {
+	id: uuid('id').primaryKey().defaultRandom(),
+	title: text('title').notNull(),
+	caption: text('caption').default('').notNull(),
+	/** video: an uploaded clip · template: a motion template played live, video optional behind it. */
+	kind: text('kind').default('video').notNull(),
+	motionTemplate: text('motion_template'),
+	slotValues: jsonb('slot_values').$type<Record<string, string | string[]>>(),
+	mediaId: text('media_id'),
+	mediaMime: text('media_mime'),
+	byteSize: integer('byte_size').default(0).notNull(),
+	durationSec: numeric('duration_sec', { precision: 6, scale: 2 }),
+	/** Shown from / until (inclusive); open-ended when null. */
+	startsOn: date('starts_on'),
+	endsOn: date('ends_on'),
+	active: boolean('active').default(true).notNull(),
+	sortOrder: integer('sort_order').default(0).notNull(),
+	createdBy: uuid('created_by').references((): any => users.id, { onDelete: 'set null' }),
+	createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+});
+
+/** One row per person, reel and day they watched it (for the studio's numbers). */
+export const engagementViews = pgTable(
+	'engagement_views',
+	{
+		itemKey: text('item_key').notNull(),
+		userId: uuid('user_id')
+			.notNull()
+			.references((): any => users.id, { onDelete: 'cascade' }),
+		day: date('day').notNull()
+	},
+	(t) => [uniqueIndex('engagement_views_once').on(t.itemKey, t.userId, t.day), index('engagement_views_day').on(t.day)]
+);
+
+/**
+ * Alumni: everyone who has left, from the left-employee tracker HR uploads
+ * (Admin Controls › Alumni; src/lib/server/alumni.ts). One row per person,
+ * keyed by employee code (else name and last working day), so a re-upload
+ * updates rather than duplicates. Linked to the portal login when one
+ * matches. ID and bank numbers in the sheet are never stored.
+ */
+export const alumniImports = pgTable('alumni_imports', {
+	id: uuid('id').primaryKey().defaultRandom(),
+	filename: text('filename').notNull(),
+	sheetName: text('sheet_name'),
+	rowCount: integer('row_count').default(0).notNull(),
+	createdCount: integer('created_count').default(0).notNull(),
+	updatedCount: integer('updated_count').default(0).notNull(),
+	matchedCount: integer('matched_count').default(0).notNull(),
+	uploadedBy: uuid('uploaded_by').references((): any => users.id, { onDelete: 'set null' }),
+	createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+});
+
+export const alumni = pgTable(
+	'alumni',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		/** Upper-cased, as everywhere else in the portal. */
+		employeeCode: text('employee_code'),
+		fullName: text('full_name').notNull(),
+		officialEmail: text('official_email'),
+		personalEmail: text('personal_email'),
+		phone: text('phone'),
+		designation: text('designation'),
+		team: text('team'),
+		department: text('department'),
+		/** The sheet's "Company" (CIPL, NON CIPL…). */
+		company: text('company'),
+		dateOfJoining: date('date_of_joining'),
+		resignationDate: date('resignation_date'),
+		lastWorkingDay: date('last_working_day'),
+		/** As HR wrote it: Resigned, Terminated, Absconded… */
+		natureOfExit: text('nature_of_exit'),
+		reason: text('reason'),
+		remarks: text('remarks'),
+		rehireEligible: text('rehire_eligible'),
+		fnfStatus: text('fnf_status'),
+		/** The portal login, when one matched by code, email or exact name. */
+		userId: uuid('user_id').references((): any => users.id, { onDelete: 'set null' }),
+		/** Every other column of the sheet, header → value, verbatim. */
+		details: jsonb('details').$type<Record<string, string>>().default({}).notNull(),
+		importId: uuid('import_id').references(() => alumniImports.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull()
+	},
+	(t) => [
+		uniqueIndex('alumni_employee_code').on(t.employeeCode).where(sql`${t.employeeCode} is not null`),
+		index('alumni_user').on(t.userId),
+		index('alumni_last_working_day').on(t.lastWorkingDay)
+	]
+);
+
+/**
+ * Who is in each support team (src/lib/capabilities.ts SUPPORT_TEAMS): HR,
+ * Employee Engagement, IT. A person may be in several. Membership adds the
+ * team's privileges and makes them a responder on its desk.
+ */
+export const supportTeamMembers = pgTable(
+	'support_team_members',
+	{
+		teamKey: text('team_key').notNull(),
+		userId: uuid('user_id')
+			.notNull()
+			.references((): any => users.id, { onDelete: 'cascade' }),
+		addedBy: uuid('added_by').references((): any => users.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+	},
+	(t) => [
+		uniqueIndex('support_team_members_team_user').on(t.teamKey, t.userId),
+		index('support_team_members_user').on(t.userId),
+		check('support_team_members_team_key', sql`${t.teamKey} in ('hr', 'engagement', 'it')`)
+	]
+);
+
 export const customRoles = pgTable('custom_roles', {
 	id: uuid('id').primaryKey().defaultRandom(),
 	name: text('name').notNull().unique(),
@@ -1078,6 +1240,8 @@ export const chatChannels = pgTable('chat_channels', {
 	/** For a desk thread: whose question it is, and whether HR has closed it. */
 	deskOwnerId: uuid('desk_owner_id').references(() => users.id),
 	deskStatus: text('desk_status'),
+	/** Which support team's desk ('hr' | 'engagement' | 'it'); null is HR (older threads). */
+	deskTeam: text('desk_team'),
 	createdBy: uuid('created_by').references(() => users.id),
 	createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 	lastMessageAt: timestamp('last_message_at', { withTimezone: true }).defaultNow().notNull(),

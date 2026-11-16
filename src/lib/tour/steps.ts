@@ -95,6 +95,16 @@ export const TOUR_STEPS: TourStep[] = [
 		optional: true
 	},
 	{
+		id: 'home-reel',
+		chapter: 'Today',
+		title: 'Live on Home',
+		body: 'On every page, bottom left: birthdays, work anniversaries and short reels from the Engagement team play here, muted. Tap to watch with sound; shrink it to a bubble if you prefer.',
+		route: '/dashboard',
+		target: 'home-reel',
+		placement: 'right',
+		optional: true
+	},
+	{
 		id: 'search',
 		chapter: 'Getting around',
 		title: 'Search, or ask Champ',

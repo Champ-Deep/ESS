@@ -9,6 +9,7 @@
  * subscribers to refresh, which is how nothing sent while offline is missed.
  */
 
+import { supportTeam, type SupportTeamKey } from '$lib/capabilities';
 import { goto } from '$app/navigation';
 
 export type ChatEvent = { type: string; [key: string]: unknown };
@@ -26,6 +27,10 @@ export type SidebarChannel = {
 	pinnedAs: 'manager' | 'hr' | null;
 	deskStatus: string | null;
 	deskOwnerId: string | null;
+	/** Which desk: 'hr' | 'engagement' | 'it'. */
+	deskTeam?: SupportTeamKey | null;
+	/** A desk nobody has written in yet. */
+	deskEmpty?: boolean;
 	isAdmin: boolean;
 	unread: number;
 	mentions: number;
@@ -35,11 +40,24 @@ export type SidebarChannel = {
 	lastReadAt: string;
 };
 
+/** Wording for a desk thread (Ask HR, Ask IT, Ask Engagement), seen by the person asking. */
+export function deskWords(c: Pick<SidebarChannel, 'deskTeam'>) {
+	const t = supportTeam(c.deskTeam);
+	return {
+		placeholder: `${t.deskName} a question`,
+		privacy: t.key === 'hr' ? 'Private to you and HR · goes to your concerned HR first' : `Private to you and ${t.name}`,
+		empty: `${t.deskName} anything here: ${t.askAbout.toLowerCase()}. Only you and ${t.name} can see it.`
+	};
+}
+
 /** What a conversation is called in the sidebar and its header. */
 export function channelLabel(c: SidebarChannel, meId: string): string {
 	if (c.kind === 'announcements') return 'announcements';
 	if (c.kind === 'system') return 'ESS notices';
-	if (c.kind === 'desk') return c.deskOwnerId === meId ? 'Ask HR' : c.name.replace(/^Ask HR · /, '');
+	if (c.kind === 'desk') {
+		const desk = supportTeam(c.deskTeam).deskName;
+		return c.deskOwnerId === meId ? desk : c.name.replace(new RegExp(`^${desk} · `), '');
+	}
 	if (c.kind === 'dm') return c.others[0]?.fullName ?? 'Just you';
 	if (c.kind === 'group') return c.others.map((o) => o.fullName.split(' ')[0]).join(', ');
 	return c.name;

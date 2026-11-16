@@ -1,13 +1,14 @@
 import { error, redirect, type RequestEvent } from '@sveltejs/kit';
 import { db } from '$lib/server/db/postgres';
-import { customRoles, users } from '$lib/server/db/schema';
+import { customRoles, supportTeamMembers, users } from '$lib/server/db/schema';
 import { eq } from 'drizzle-orm';
-import { effectiveCapabilities, type CapabilityKey } from '$lib/capabilities';
+import { SUPPORT_TEAMS, effectiveCapabilities, supportTeamCapabilities, type CapabilityKey, type SupportTeamKey } from '$lib/capabilities';
 import type { SessionUser } from '$lib/server/auth';
 
 /**
- * Loads what a signed-in person may do: base role defaults plus their named
- * role (src/lib/capabilities.ts).
+ * Loads what a signed-in person may do: base role defaults, plus their named
+ * role, plus the bundle of each support team they are in (HR, Employee
+ * Engagement, IT; src/lib/capabilities.ts).
  *
  * Read from the database rather than baked into the access token, so giving
  * or taking away a privilege applies within the cache window below instead of
@@ -15,7 +16,7 @@ import type { SessionUser } from '$lib/server/auth';
  * every request would otherwise pay a join.
  */
 
-type Loaded = { caps: CapabilityKey[]; customRoleId: string | null; customRoleName: string | null; at: number };
+type Loaded = { caps: CapabilityKey[]; customRoleId: string | null; customRoleName: string | null; supportTeams: string[]; at: number };
 
 const TTL_MS = 30_000;
 const cache = new Map<string, Loaded>();
@@ -24,17 +25,22 @@ export async function loadCapabilities(user: Pick<SessionUser, 'id' | 'role'>): 
 	const hit = cache.get(user.id);
 	if (hit && Date.now() - hit.at < TTL_MS) return hit;
 
-	const [row] = await db
-		.select({ customRoleId: users.customRoleId, name: customRoles.name, capabilities: customRoles.capabilities })
-		.from(users)
-		.leftJoin(customRoles, eq(customRoles.id, users.customRoleId))
-		.where(eq(users.id, user.id))
-		.limit(1);
+	const [[row], teamRows] = await Promise.all([
+		db
+			.select({ customRoleId: users.customRoleId, name: customRoles.name, capabilities: customRoles.capabilities })
+			.from(users)
+			.leftJoin(customRoles, eq(customRoles.id, users.customRoleId))
+			.where(eq(users.id, user.id))
+			.limit(1),
+		db.select({ teamKey: supportTeamMembers.teamKey }).from(supportTeamMembers).where(eq(supportTeamMembers.userId, user.id))
+	]);
+	const supportTeams = teamRows.map((t) => t.teamKey);
 
 	const loaded: Loaded = {
-		caps: effectiveCapabilities(user.role, row?.capabilities ?? []),
+		caps: effectiveCapabilities(user.role, [...(row?.capabilities ?? []), ...supportTeamCapabilities(supportTeams)]),
 		customRoleId: row?.customRoleId ?? null,
 		customRoleName: row?.name ?? null,
+		supportTeams,
 		at: Date.now()
 	};
 	cache.set(user.id, loaded);
@@ -51,6 +57,11 @@ export function hasCap(user: SessionUser | null | undefined, key: CapabilityKey)
 	if (!user) return false;
 	if (user.role === 'super_admin') return true;
 	return (user.capabilities ?? []).includes(key);
+}
+
+/** The desks this person answers: 'hr' | 'engagement' | 'it' (src/lib/capabilities.ts). */
+export function answerableDesks(user: SessionUser | null | undefined): SupportTeamKey[] {
+	return SUPPORT_TEAMS.filter((t) => hasCap(user, t.deskCap)).map((t) => t.key);
 }
 
 export function hasAnyCap(user: SessionUser | null | undefined, keys: CapabilityKey[]): boolean {

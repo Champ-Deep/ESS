@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canOpenAdmin, defaultCapabilities, effectiveCapabilities, ROLE_PRESETS, CAPABILITY_KEYS } from './capabilities';
+import { canOpenAdmin, defaultCapabilities, effectiveCapabilities, ROLE_PRESETS, CAPABILITY_KEYS, supportTeamCapabilities } from './capabilities';
 import { visibleAdminTabs } from './admin-tabs';
 import { dmAllowed, type Person } from './server/chat/access';
 
@@ -24,8 +24,17 @@ describe('effective privileges', () => {
 		expect(effectiveCapabilities('employee', ['made.up', 'org.view'])).toEqual(['org.view']);
 	});
 
-	it('shows an HR Admin the tabs they could before named roles existed', () => {
-		expect(visibleAdminTabs(defaultCapabilities('admin')).map((t) => t.id)).toEqual(['overview', 'analytics', 'people', 'biometric', 'balances', 'org', 'access', 'chat']);
+	it('shows an HR Admin the tabs they could before named roles existed, plus who is in HR, IT and Engagement', () => {
+		expect(visibleAdminTabs(defaultCapabilities('admin')).map((t) => t.id)).toEqual(['overview', 'analytics', 'people', 'alumni', 'biometric', 'balances', 'org', 'access', 'support', 'chat']);
+	});
+
+	it('gives each team its own tabs and never People', () => {
+		const tabsOf = (team: string) => visibleAdminTabs(effectiveCapabilities('employee', supportTeamCapabilities([team]))).map((t) => t.id);
+		expect(tabsOf('it')).toEqual(expect.arrayContaining(['it', 'biometric']));
+		expect(tabsOf('engagement')).toContain('engagement');
+		expect(tabsOf('hr')).toContain('alumni');
+		for (const team of ['hr', 'it', 'engagement']) for (const tab of ['people', 'policies', 'access', 'support']) expect(tabsOf(team), `${team}: ${tab}`).not.toContain(tab);
+		expect(tabsOf('hr')).not.toContain('org');
 	});
 });
 
