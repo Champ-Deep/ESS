@@ -13,7 +13,8 @@ const user = (role: SessionUser['role'], capabilities: SessionUser['capabilities
 beforeEach(() => {
 	invalidateCapabilities();
 	vi.clearAllMocks();
-	const query = { from: () => query, leftJoin: () => query, where: () => query, limit };
+	// main also loads support-team rows via an awaited .where(), so the query is thenable
+	const query = { from: () => query, leftJoin: () => query, where: () => query, limit, then: (ok: (rows: unknown[]) => unknown) => ok([]) };
 	select.mockReturnValue(query);
 	limit.mockResolvedValue([{ customRoleId: 'legacy', name: 'Legacy grants', capabilities: ['policies.publish', 'system.design_tweaks'] }]);
 });
@@ -51,8 +52,8 @@ describe('restricted server capabilities', () => {
 		const lowered = await loadCapabilities(user('employee'));
 		expect(lowered.caps).not.toContain('policies.publish');
 		expect(lowered.caps).not.toContain('system.design_tweaks');
-		expect(select).toHaveBeenCalledTimes(2);
+		expect(limit).toHaveBeenCalledTimes(2);
 		await loadCapabilities(user('employee'));
-		expect(select).toHaveBeenCalledTimes(2);
+		expect(limit).toHaveBeenCalledTimes(2);
 	});
 });
