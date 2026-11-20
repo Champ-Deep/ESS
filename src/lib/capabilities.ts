@@ -81,6 +81,11 @@ export const CAPABILITY_KEYS = CAPABILITIES.map((c) => c.key) as CapabilityKey[]
 
 export const GRANTABLE_KEYS = CAPABILITIES.filter((c) => c.grantable).map((c) => c.key) as CapabilityKey[];
 
+/** Privileges a named role on this base role can usefully be given (policy publishing needs admin). */
+export function grantableFor(role: Role): Capability[] {
+	return CAPABILITIES.filter((c) => c.grantable && (c.key !== 'policies.publish' || role === 'admin'));
+}
+
 /** What each base role has before any named role is added. */
 const DEFAULTS: Record<Role, CapabilityKey[]> = {
 	employee: [],

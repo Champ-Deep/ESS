@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { canOpenAdmin, defaultCapabilities, effectiveCapabilities, ROLE_PRESETS, CAPABILITY_KEYS } from './capabilities';
+import { grantableFor, canOpenAdmin, defaultCapabilities, effectiveCapabilities, ROLE_PRESETS, CAPABILITY_KEYS } from './capabilities';
 import { visibleAdminTabs } from './admin-tabs';
 import { dmAllowed, type Person } from './server/chat/access';
+
+describe('role editor choices', () => {
+	it.each(['employee', 'team_lead'] as const)('does not offer policy publishing on %s', (role) => {
+		expect(grantableFor(role).map((c) => c.key)).not.toContain('policies.publish');
+	});
+	it('offers policy publishing on admin', () => {
+		expect(grantableFor('admin').map((c) => c.key)).toContain('policies.publish');
+	});
+});
 
 describe('effective privileges', () => {
 	it.each(['employee', 'team_lead', 'admin'] as const)('keeps restricted surfaces out of %s defaults', (role) => {

@@ -102,6 +102,15 @@ describe('adminStrips', () => {
 	});
 });
 
+describe('adminStrips leave policy hint', () => {
+	const noTypes = facts({ activeLeaveTypes: 0 });
+	const hint = (caps: string[]) => adminStrips(noTypes, NOW, caps).overview?.find((i) => i.label === 'Leave types published')?.detail;
+	it('shows the publish hint only to someone who can publish', () => {
+		expect(hint(['policies.publish'])).toBe('Publish the leave policy');
+		expect(hint(['people.directory'])).toBeUndefined();
+	});
+});
+
 describe('admin tabs', () => {
 	it('matches nested paths to their tab and only the bare path to Overview', () => {
 		expect(adminTabForPath('/admin')?.id).toBe('overview');

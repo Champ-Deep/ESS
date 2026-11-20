@@ -48,7 +48,7 @@ export const load: LayoutServerLoad = async ({ locals, url }) => {
 		adminRole: role,
 		adminCaps: caps,
 		adminIssues: issues,
-		adminStrips: adminStrips(facts, now),
+		adminStrips: adminStrips(facts, now, caps),
 		// Overrides the (app) layout's figure, so the sidebar badge is fresh here.
 		adminIssueCount: issues.filter((i) => i.severity !== 'info').length
 	};

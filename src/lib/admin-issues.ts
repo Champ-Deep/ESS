@@ -268,7 +268,7 @@ export function tabSeverities(issues: AdminIssue[]): Partial<Record<AdminTabId, 
  * The numbers each section opens with. Only sections whose own page does not
  * already lead with figures get one.
  */
-export function adminStrips(facts: AdminFacts, now: Date): Partial<Record<AdminTabId, StripItem[]>> {
+export function adminStrips(facts: AdminFacts, now: Date, caps: readonly string[] = []): Partial<Record<AdminTabId, StripItem[]>> {
 	const { year, month } = istYearMonth(now);
 	const importDays = daysSince(facts.lastAttendanceImportAt, now);
 	const importTone = importDays === null ? 'muted' : importDays >= 3 ? 'bad' : importDays >= 2 ? 'warn' : 'ok';
@@ -311,7 +311,7 @@ export function adminStrips(facts: AdminFacts, now: Date): Partial<Record<AdminT
 				value: String(facts.activeLeaveTypes),
 				label: 'Leave types published',
 				tone: facts.activeLeaveTypes === 0 ? 'bad' : undefined,
-				detail: facts.activeLeaveTypes === 0 ? 'Publish the leave policy' : undefined
+				detail: facts.activeLeaveTypes === 0 && caps.includes('policies.publish') ? 'Publish the leave policy' : undefined
 			}
 		],
 		biometric: [

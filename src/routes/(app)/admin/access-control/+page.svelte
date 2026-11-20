@@ -17,6 +17,7 @@
 	import {
 		BASE_ROLE_LABEL,
 		CAPABILITIES,
+		grantableFor,
 		ROLE_PRESETS,
 		defaultCapabilities,
 		effectiveCapabilities,
@@ -39,7 +40,6 @@
 	const BUILT_IN_ICON: Record<BuiltIn, typeof User> = { employee: User, team_lead: Users, admin: Shield, super_admin: Crown };
 
 	const GROUPS = [...new Set(CAPABILITIES.map((c) => c.group))] as CapabilityGroup[];
-	const grantable = CAPABILITIES.filter((c) => c.grantable);
 
 	/* ---------- which role the aside describes ---------- */
 	type Selection = { kind: 'builtin'; id: BuiltIn } | { kind: 'named'; id: string };
@@ -69,6 +69,7 @@
 	}
 	/** Privileges the base role already gives, shown ticked and locked. */
 	const inherited = $derived(editing ? defaultCapabilities(editing.baseRole) : []);
+	const grantable = $derived(editing ? grantableFor(editing.baseRole) : []);
 
 	let confirmDelete = $state<string | null>(null);
 	const pick = $state<Record<string, string>>({});
