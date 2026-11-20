@@ -29,7 +29,8 @@ export type TaskView = {
 	completedAt: string | null;
 	updatedAt: string;
 	/** What the viewer may do with it. */
-	can: { edit: boolean; approve: boolean };
+	/** delete: the maker, their leads or a Super Admin; the delete button shows only then. */
+	can: { edit: boolean; approve: boolean; delete: boolean };
 };
 
 export type TaskDetail = TaskView & {

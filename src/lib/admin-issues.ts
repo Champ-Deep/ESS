@@ -14,6 +14,10 @@ export type AdminFacts = {
 	activePeople: number;
 	/** Active people with no reporting manager, Super Admins excluded. */
 	withoutManager: number;
+	/** Active people with no shift group (so no holiday calendar), Super Admins excluded. */
+	withoutShift?: number;
+	/** People on the alumni list who have left and can still sign in. */
+	leaversWithLogin?: number;
 	/** Names of people whose chain of managers loops back on itself. */
 	loopMemberNames: string[];
 	/** ISO timestamp of the latest attendance import, device feed or manual. */
@@ -145,6 +149,19 @@ export function deriveAdminIssues(facts: AdminFacts, caps: readonly string[], no
 		});
 	}
 
+	if ((facts.withoutShift ?? 0) > 0) {
+		const n = facts.withoutShift ?? 0;
+		issues.push({
+			id: `people-no-shift-${n}`,
+			severity: 'warn',
+			title: `${plural(n, 'person has', 'people have')} no shift group`,
+			detail: 'They see no holiday calendar, and their holidays are not counted in attendance or payroll. Set it in each person’s settings.',
+			tab: 'people',
+			href: '/admin/people',
+			cta: 'Open people'
+		});
+	}
+
 	if (facts.pendingLeaveOld > 0) {
 		issues.push({
 			id: `leave-old-${facts.pendingLeaveOld}`,
@@ -154,6 +171,19 @@ export function deriveAdminIssues(facts: AdminFacts, caps: readonly string[], no
 			tab: 'leave',
 			href: '/leave',
 			cta: 'Open approvals'
+		});
+	}
+
+	if (can('people.alumni') && (facts.leaversWithLogin ?? 0) > 0) {
+		const n = facts.leaversWithLogin ?? 0;
+		issues.push({
+			id: `alumni-open-${n}`,
+			severity: 'warn',
+			title: `${plural(n, 'person who has left still has', 'people who have left still have')} a login`,
+			detail: 'They are on the alumni list but can still sign in. Close their logins from Alumni.',
+			tab: 'alumni',
+			href: '/admin/alumni',
+			cta: 'Review'
 		});
 	}
 

@@ -13,7 +13,7 @@ import type { MeetingItemView, MeetingRowView, MeetingSummary, MeetingView, Pers
 import { assignableFor, createTask, loadOrg, reachFor, treeOf, type Result } from '$lib/server/tasks/service';
 import { extractItems, type Attendee } from './extract';
 import { hiddenFrom, notHidden } from '$lib/server/hidden-users';
-import { createZoomMeeting, defaultZoomHost, deleteZoomMeeting, listSummaries, zoomUserCheck, meetingSummary, pastParticipants, recordStatus, zoomConfigured, zoomStartUrl, ZoomError, type ZoomSummary } from '$lib/server/zoom/client';
+import { createZoomMeeting, defaultZoomHost, deleteZoomMeeting, listSummaries, zoomUserCheck, meetingSummary, pastParticipants, recordStatus, zoomConfigured, zoomStartUrl, ZoomError, missingScopes, type ZoomSummary } from '$lib/server/zoom/client';
 
 /**
  * Meetings and their minutes.
@@ -682,8 +682,12 @@ function scheduleFailureMessage(err: unknown): string {
 	if (!(err instanceof ZoomError)) return 'The video call could not be set up. Try again, or tell HR if it keeps happening.';
 	if (err.status === 400 && err.message.startsWith('Video')) return err.message;
 	// 4711: the token lacks a scope. 124: invalid or revoked token.
-	if (err.code === 4711 || /does not contain scopes|scope/i.test(err.message)) {
-		return 'The company Zoom app is not allowed to create meetings yet. Ask HR to add the "create meetings" permission (meeting:write:meeting:admin) to the Zoom app.';
+	if (err.code === 4711 || /does not contain scopes/i.test(err.message)) {
+		// Name exactly what Zoom says is missing (the request was already retried
+		// with a fresh token, so a scope added a moment ago has been tried).
+		const scopes = missingScopes(err.message);
+		const list = scopes.length ? scopes.join(', ') : 'meeting:write:meeting:admin';
+		return `The company Zoom app is missing ${scopes.length > 1 ? 'these permissions' : 'this permission'}: ${list}. Add ${scopes.length > 1 ? 'them' : 'it'} to the Server-to-Server app in the Zoom Marketplace (Scopes), then try again.`;
 	}
 	if (err.code === 124 || err.status === 401) return 'The company Zoom app was refused by Zoom. Ask HR to check its keys in Admin Controls › Zoom.';
 	if (err.status === 404 || err.code === 1001 || err.code === 1120) {

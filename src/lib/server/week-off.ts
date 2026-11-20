@@ -46,7 +46,7 @@ export async function loadAssignableRosters(actor: {
 		.where(
 			and(
 				eq(weekOffRosters.status, 'published'),
-				or(isNull(weekOffRosters.teamId), eq(weekOffRosters.teamId, actor.teamId ?? ''))
+				actor.teamId ? or(isNull(weekOffRosters.teamId), eq(weekOffRosters.teamId, actor.teamId)) : isNull(weekOffRosters.teamId)
 			)
 		)
 		.orderBy(weekOffRosters.name);

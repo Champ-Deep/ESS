@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SUPPORT_TEAMS } from '$lib/capabilities';
 	import Megaphone from '@lucide/svelte/icons/megaphone';
 	import Hash from '@lucide/svelte/icons/hash';
 	import Lock from '@lucide/svelte/icons/lock';
@@ -20,6 +21,7 @@
 		activeId,
 		meId,
 		isHr,
+		desks: answering = undefined,
 		presence,
 		champWaiting = 0,
 		onselect,
@@ -31,6 +33,8 @@
 		activeId: string | null;
 		meId: string;
 		isHr: boolean;
+		/** The desks this person answers ('hr' | 'engagement' | 'it'). */
+		desks?: string[];
 		presence: Map<string, { state: string; online: boolean; label: string }>;
 		/** Approvals and tasks waiting in Champ's Requests tab. */
 		champWaiting?: number;
@@ -61,7 +65,19 @@
 			.sort((a, b) => Number(!!b.pinnedAs) - Number(!!a.pinnedAs) || byRecent(a, b))
 	);
 	const desks = $derived(channels.filter((c) => c.kind === 'desk' && match(c)).sort((a, b) => Number(a.deskStatus === 'resolved') - Number(b.deskStatus === 'resolved') || byRecent(a, b)));
-	const openDesks = $derived(desks.filter((d) => d.deskStatus !== 'resolved').length);
+	// Your own Ask HR / Ask IT / Ask Engagement threads, in that order.
+	const myDesks = $derived(
+		desks
+			.filter((d) => d.deskOwnerId === meId)
+			.sort((a, b) => SUPPORT_TEAMS.findIndex((t) => t.key === (a.deskTeam ?? 'hr')) - SUPPORT_TEAMS.findIndex((t) => t.key === (b.deskTeam ?? 'hr')))
+	);
+	// Questions you answer, per team; threads nobody has written in stay out.
+	const answerDesks = $derived(
+		SUPPORT_TEAMS.map((t) => {
+			const list = desks.filter((d) => d.deskOwnerId !== meId && (d.deskTeam ?? 'hr') === t.key && !d.deskEmpty);
+			return { team: t, list, open: list.filter((d) => d.deskStatus !== 'resolved').length };
+		}).filter((g) => g.list.length > 0 || (answering ?? (isHr ? ['hr'] : [])).includes(g.team.key))
+	);
 </script>
 
 {#snippet row(c: SidebarChannel)}
@@ -140,10 +156,15 @@
 		{#each dms as c (c.id)}{@render row(c)}{/each}
 		{#if dms.length === 0}<p class="empty">Start one with the + button.</p>{/if}
 
-		{#if desks.length}
-			<h3>{isHr ? `Ask HR desk${openDesks ? ` · ${openDesks} open` : ''}` : 'Ask HR'}</h3>
-			{#each desks as c (c.id)}{@render row(c)}{/each}
+		{#if myDesks.length}
+			<h3>Help desks</h3>
+			{#each myDesks as c (c.id)}{@render row(c)}{/each}
 		{/if}
+		{#each answerDesks as g (g.team.key)}
+			<h3>{g.team.deskName} desk{g.open ? ` · ${g.open} open` : ''}</h3>
+			{#each g.list as c (c.id)}{@render row(c)}{/each}
+			{#if g.list.length === 0}<p class="empty">No questions yet.</p>{/if}
+		{/each}
 	</div>
 	<div class="quick">
 		<button type="button" onclick={() => onfind('search')}><Search size={13} /> Search messages</button>

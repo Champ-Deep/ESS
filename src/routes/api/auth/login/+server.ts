@@ -6,6 +6,7 @@ import { eq } from 'drizzle-orm';
 import { verifyPassword, issueAccessToken, issueRefreshToken, setAuthCookies } from '$lib/server/auth';
 import { isLoginRateLimited, clearLoginRateLimit } from '$lib/server/db/redis';
 import { logActivity } from '$lib/server/db/mongo';
+import { isNoLoginEmail } from '$lib/no-login';
 
 export const POST: RequestHandler = async ({ request, cookies, getClientAddress }) => {
 	const { email, password } = await request.json();
@@ -25,7 +26,8 @@ export const POST: RequestHandler = async ({ request, cookies, getClientAddress 
 		.where(eq(users.email, email.toLowerCase()))
 		.limit(1);
 
-	if (!user || !user.isActive) {
+	// A blue-collar placeholder is never a sign-in, whatever its password says.
+	if (!user || !user.isActive || isNoLoginEmail(user.email)) {
 		throw error(401, 'Invalid email or password');
 	}
 

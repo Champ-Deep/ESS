@@ -211,7 +211,7 @@ async function unreadChats(user: SessionUser): Promise<ChatPreview[]> {
 	return unread.map((c) => {
 		const l = by.get(c.id);
 		const name =
-			c.kind === 'channel' ? `#${c.name}` : c.kind === 'dm' ? (c.others[0]?.fullName ?? 'Just you') : c.kind === 'group' ? c.others.map((o) => o.fullName.split(' ')[0]).join(', ') : c.kind === 'announcements' ? 'Announcements' : c.kind === 'desk' ? 'Ask HR' : c.name;
+			c.kind === 'channel' ? `#${c.name}` : c.kind === 'dm' ? (c.others[0]?.fullName ?? 'Just you') : c.kind === 'group' ? c.others.map((o) => o.fullName.split(' ')[0]).join(', ') : c.kind === 'announcements' ? 'Announcements' : c.name;
 		return { id: c.id, name, kind: c.kind, unread: c.unread, mentions: c.mentions, last: l ? `${l.author ? l.author.split(' ')[0] + ': ' : ''}${l.body.slice(0, 140)}` : null, lastAt: c.lastMessageAt };
 	});
 }

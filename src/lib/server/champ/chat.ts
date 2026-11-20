@@ -34,7 +34,7 @@ function systemPrompt(c: Caller, toolNames: string[]): string {
 		'HOW TO ANSWER',
 		'- Answer from tool results only. Never state a number, name or date you did not get from a tool. If nothing matched, say so.',
 		'- Be brief. People are mid-task. Plain sentences; a list is one item per line starting with "- ". No markdown headings, bold or tables.',
-		'- Indian English and the portal\'s words: leave, earned leave (EL), casual leave (CL), comp-off, attendance correction, concerned HR, shift group, week off, reports to, Chief.',
+		'- Indian English and the portal\'s words: leave, earned leave (EL), casual leave (CL), comp-off, attendance correction, concerned HR, shift group, week off, reports to, Chief, Mam.',
 		'- Dates like "Fri 2 Oct". Times in IST.',
 		'- Never output Aadhaar, PAN, bank details, salary or passwords. The tools never return them; do not guess them.',
 		...(c.mode === 'channel'

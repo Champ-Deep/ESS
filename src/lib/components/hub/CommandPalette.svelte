@@ -9,6 +9,8 @@
 	import Video from '@lucide/svelte/icons/video';
 	import Plus from '@lucide/svelte/icons/plus';
 	import UserIcon from '@lucide/svelte/icons/user';
+	import Compass from '@lucide/svelte/icons/compass';
+	import { tour } from '$lib/tour/tour.svelte';
 	import { chat, channelLabel } from '$lib/chat/client.svelte';
 	import { api, hub } from '$lib/hub/client.svelte';
 	import { lockPageScroll } from '$lib/scroll-lock';
@@ -75,6 +77,7 @@
 		for (const [label, href] of nav) if (has(label)) out.push({ key: 'nav' + href, icon: ArrowRight, label: `Go to ${label}`, hint: 'Go to', run: () => go(href) });
 		if (has('new task')) out.push({ key: 'new', icon: Plus, label: 'New task', hint: 'Action', run: () => { onclose(); hub.newTaskOpen = true; } });
 		if (has('champ')) out.push({ key: 'champ', icon: Sparkles, label: 'Open Champ', hint: 'Assistant', run: () => go('/hub/c/champ') });
+		if (has('take the tour')) out.push({ key: 'tour', icon: Compass, label: 'Take the tour', hint: 'Help', run: () => { onclose(); tour.start(0); } });
 		const convs = chat.channels.filter((c) => has(channelLabel(c, meId))).slice(0, text ? 6 : 4);
 		for (const c of convs) out.push({ key: 'c' + c.id, icon: c.kind === 'dm' ? MessageSquare : Hash, label: (c.kind === 'channel' ? '#' : '') + channelLabel(c, meId), hint: 'Chat', run: () => go(`/hub/c/${c.id}`) });
 		for (const t of remote.tasks) out.push({ key: 't' + t.id, icon: SquareKanban, label: t.title, hint: `Task · ${t.assignee?.fullName ?? 'Unassigned'}`, run: () => { onclose(); hub.openTask(t.id); } });

@@ -26,11 +26,19 @@ export const load: PageServerLoad = async ({ locals }) => {
 
 	if (profile?.shiftGroupId) {
 		const [group] = await db.select().from(shiftGroups).where(eq(shiftGroups.id, profile.shiftGroupId)).limit(1);
-		const [calendar] = await db
+		// This year's calendar; failing that the next one to come, then the
+		// latest past one. Taking the oldest showed last year's holidays once
+		// a new year was published.
+		const published = await db
 			.select()
 			.from(holidayCalendars)
 			.where(and(eq(holidayCalendars.shiftGroupId, profile.shiftGroupId), eq(holidayCalendars.status, 'published')))
 			.orderBy(holidayCalendars.year);
+		const thisYear = new Date().getFullYear();
+		const calendar =
+			published.find((c) => c.year === thisYear) ??
+			published.find((c) => c.year > thisYear) ??
+			published.at(-1);
 
 		if (calendar && group) {
 			const rows = await db.select().from(holidays).where(eq(holidays.calendarId, calendar.id));

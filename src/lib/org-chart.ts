@@ -21,8 +21,10 @@ export interface OrgPerson {
 	reportsTo: string | null;
 	teamId: string | null;
 	employeeCode?: string | null;
-	/** Reports to Chief, the head of the company, who has no login. */
+	/** Reports to a top-level position (Chief or Mam), which has no login. */
 	reportsToChief?: boolean;
+	/** Which top position, when reportsToChief is set: 'chief' (default) or 'mam'. */
+	topPosition?: string | null;
 }
 
 export interface OrgNode {
@@ -38,6 +40,8 @@ export interface OrgChartResult {
 	 * as a position with no account (src/lib/chief.ts).
 	 */
 	underChief: OrgNode[];
+	/** The same for Mam, Chief's equal, drawn as a second head beside Chief. */
+	underMam: OrgNode[];
 	/** Trees grown from everyone else with no manager inside this set. */
 	roots: OrgNode[];
 	/**
@@ -96,10 +100,12 @@ export function buildOrgTree(people: OrgPerson[]): OrgChartResult {
 		.filter((p) => managerOf(p) === null)
 		.map((p) => grow(p.id, 0))
 		.sort(byName);
-	// Only someone with no manager at all hangs from Chief: a real manager in
-	// the set always wins over a stale flag.
-	const underChief = tops.filter((n) => n.person.reportsToChief && !n.person.reportsTo);
-	const roots = tops.filter((n) => !underChief.includes(n));
+	// Only someone with no manager at all hangs from Chief or Mam: a real
+	// manager in the set always wins over a stale flag.
+	const underTop = tops.filter((n) => n.person.reportsToChief && !n.person.reportsTo);
+	const underMam = underTop.filter((n) => n.person.topPosition === 'mam');
+	const underChief = underTop.filter((n) => !underMam.includes(n));
+	const roots = tops.filter((n) => !underTop.includes(n));
 
 	// Whatever is still unvisited could not be reached from any root, which
 	// means its chain closes on itself. Walk each one up to name the members.
@@ -132,6 +138,7 @@ export function buildOrgTree(people: OrgPerson[]): OrgChartResult {
 
 	return {
 		underChief,
+		underMam,
 		roots,
 		orphans,
 		cycleMemberIds: [...cycleMemberIds],

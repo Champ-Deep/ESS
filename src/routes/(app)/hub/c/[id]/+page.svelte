@@ -24,7 +24,7 @@
 	import AnnouncementAdmin from '$lib/components/announcements/AnnouncementAdmin.svelte';
 	import ChampPanel from '$lib/components/champ/ChampPanel.svelte';
 	import NewTaskDialog from '$lib/components/hub/NewTaskDialog.svelte';
-	import { chat, channelLabel, type SidebarChannel } from '$lib/chat/client.svelte';
+	import { chat, channelLabel, type SidebarChannel, deskWords } from '$lib/chat/client.svelte';
 	import type { ChatMessageView } from '$lib/server/chat/messages';
 
 	let { data, form } = $props();
@@ -148,7 +148,7 @@
 		if (other && !other.isActive) return `${other.fullName} has left, so this conversation is read-only.`;
 		return null;
 	});
-	const placeholder = $derived(active ? (active.kind === 'channel' ? `Message #${active.name}  ·  /task @name to give a task` : active.kind === 'desk' ? (active.deskOwnerId === me.id ? 'Ask HR a question' : 'Reply to this question') : `Message ${channelLabel(active, me.id)}`) : 'Message');
+	const placeholder = $derived(active ? (active.kind === 'channel' ? `Message #${active.name}  ·  /task @name to give a task` : active.kind === 'desk' ? (active.deskOwnerId === me.id ? deskWords(active).placeholder : 'Reply to this question') : `Message ${channelLabel(active, me.id)}`) : 'Message');
 	const canMentionAll = $derived(!!active && active.kind === 'channel' && (data.can.mentionAll || (me.role === 'team_lead' && (active.teamId === me.teamId || (active.source === 'team' && !!me.teamId)))));
 	// Tasks come from conversations between people, not from feeds.
 	const canMakeTasks = $derived(!!active && (active.kind === 'channel' || active.kind === 'dm' || active.kind === 'group' || active.kind === 'desk'));
@@ -156,7 +156,7 @@
 	const subtitle = $derived.by(() => {
 		if (!active) return '';
 		if (other) return `${statusOf(other.id)?.label ?? ''}${statusOf(other.id)?.online ? ' · online' : ''}${active.pinnedAs ? ` · ${active.pinnedAs === 'manager' ? 'Your reporting manager' : 'Your concerned HR'}` : ''}`.replace(/^ · /, '');
-		if (active.kind === 'desk') return `${active.deskOwnerId === me.id ? 'Private to you and HR · goes to your concerned HR first' : `Question from ${channelLabel(active, me.id)}`} · ${active.deskStatus === 'resolved' ? 'Resolved' : 'Open'}`;
+		if (active.kind === 'desk') return `${active.deskOwnerId === me.id ? deskWords(active).privacy : `Question from ${channelLabel(active, me.id)}`} · ${active.deskStatus === 'resolved' ? 'Resolved' : 'Open'}`;
 		if (active.kind === 'announcements') return 'Notices from HR: what needs you, what is coming up, updates';
 		if (active.kind === 'system') return 'Requests waiting on you, decisions on yours, reminders';
 		const n = members.length ? `${members.length + 1} members` : '';
@@ -187,6 +187,7 @@
 			{activeId}
 			meId={me.id}
 			isHr={data.can.hrDesk}
+			desks={data.can.desks}
 			{presence}
 			{champWaiting}
 			onselect={select}
@@ -253,7 +254,7 @@
 						{statusOf}
 						onreply={openThread}
 						onmaketask={canMakeTasks ? (m) => (makeFrom = { messageId: m.id, text: m.body, mentionIds: m.mentions }) : undefined}
-						emptyText={active.kind === 'system' ? 'Nothing here yet. Leave requests to approve and decisions on yours will appear here.' : active.kind === 'desk' ? 'Ask HR anything here. Only you and HR can see it.' : 'No messages yet. Say hello.'}
+						emptyText={active.kind === 'system' ? 'Nothing here yet. Leave requests to approve and decisions on yours will appear here.' : active.kind === 'desk' ? deskWords(active).empty : 'No messages yet. Say hello.'}
 					/>
 					<Composer channelId={active.id} {members} {placeholder} {disabledReason} {canMentionAll} onsent={(m) => m && list?.upsert([m])} />
 				{/key}
@@ -279,7 +280,7 @@
 					channel={active}
 					meId={me.id}
 					meName={me.fullName}
-					can={{ hrDesk: data.can.hrDesk, export: data.can.export, createChannels: data.can.createChannels }}
+					can={{ hrDesk: data.can.hrDesk, desks: data.can.desks, export: data.can.export, createChannels: data.can.createChannels }}
 					{statusOf}
 					onclose={closePanel}
 					onleft={() => {

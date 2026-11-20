@@ -5,7 +5,8 @@ import { bulkImports, bulkImportRows, users } from '$lib/server/db/schema';
 import { looksLikeEmail } from '$lib/server/bulk-import';
 import { eq, and, ne } from 'drizzle-orm';
 import { requireCap } from '$lib/server/capabilities';
-import { isChiefReference } from '$lib/chief';
+import { isTopReference, topLabel } from '$lib/chief';
+import { isNoLoginEmail } from '$lib/no-login';
 
 const VALID_ROLES = ['super_admin', 'admin', 'team_lead', 'employee'] as const;
 
@@ -94,16 +95,33 @@ export const PATCH: RequestHandler = async (event) => {
 			if (body.reportsToRowId === rowId) throw error(400, 'A row cannot report to itself');
 		}
 		patch.reportsToRowId = body.reportsToRowId;
-		// Clearing the manager of a row the sheet put under Chief means "nobody",
-		// so the sheet's "Chief" must not be read as the answer at apply.
-		if (body.reportsToRowId === null && isChiefReference(row.reportingAuthorityRaw)) patch.reportingAuthorityRaw = null;
+		if (body.reportsToRowId !== null) patch.reportsToUserId = null;
+		// Clearing the manager of a row the sheet put under Chief or Mam means
+		// "nobody", so the sheet's "Chief"/"Mam" must not be read as the answer at apply.
+		if (body.reportsToRowId === null && isTopReference(row.reportingAuthorityRaw)) patch.reportingAuthorityRaw = null;
 	}
 
-	// Reports to Chief, the head of the company: no row to point at, recorded
-	// the same way an upload records a sheet that says "Chief".
+	// A manager already in the portal, for a sheet that doesn't list them.
+	if ('reportsToUserId' in body) {
+		if (body.reportsToUserId !== null) {
+			if (typeof body.reportsToUserId !== 'string') throw error(400, 'reportsToUserId must be a user id or null');
+			const [target] = await db
+				.select({ id: users.id, isActive: users.isActive })
+				.from(users)
+				.where(eq(users.id, body.reportsToUserId))
+				.limit(1);
+			if (!target?.isActive) throw error(400, 'That manager is not an active person in the portal');
+			patch.reportsToRowId = null;
+		}
+		patch.reportsToUserId = body.reportsToUserId;
+	}
+
+	// Reports to Chief or Mam, the heads of the company: no row to point at,
+	// recorded the same way an upload records a sheet that says "Chief"/"Mam".
 	if (body.reportsToChief === true) {
 		patch.reportsToRowId = null;
-		patch.reportingAuthorityRaw = 'Chief';
+		patch.reportsToUserId = null;
+		patch.reportingAuthorityRaw = topLabel(body.topPosition);
 	}
 
 	// Explicit resolution for a row flagged as a possible existing-person match
@@ -123,8 +141,52 @@ export const PATCH: RequestHandler = async (event) => {
 		}
 	}
 
+	// --- Blue collar (src/lib/no-login.ts) -------------------------------------
+	// A row with no work email is created only once the reviewer says the person
+	// is blue collar — no login, looked after by their reporting manager — and
+	// has given them a manager who can sign in to do that.
+	if ('blueCollar' in body) {
+		if (typeof body.blueCollar !== 'boolean') throw error(400, 'blueCollar must be true or false');
+		if (body.blueCollar && !isNoLoginEmail(patch.officialEmail ?? row.officialEmail)) {
+			throw error(400, 'Only a row with no work email can be marked blue collar');
+		}
+		patch.blueCollar = body.blueCollar;
+		if (body.blueCollar) patch.role = 'employee';
+	}
+	// A real email makes it an ordinary login again.
+	if (patch.officialEmail) patch.blueCollar = false;
+	const managerRowId = 'reportsToRowId' in patch ? patch.reportsToRowId : row.reportsToRowId;
+	const managerUserId = 'reportsToUserId' in patch ? patch.reportsToUserId : row.reportsToUserId;
+	if (patch.blueCollar ?? row.blueCollar) {
+		// The manager is either another row of this sheet or someone already in
+		// the portal; before, only the first counted, so a worker whose manager
+		// was onboarded earlier could never be confirmed.
+		const [manager] = managerRowId
+			? await db
+					.select({ fullName: bulkImportRows.fullName, officialEmail: bulkImportRows.officialEmail })
+					.from(bulkImportRows)
+					.where(eq(bulkImportRows.id, managerRowId))
+					.limit(1)
+			: managerUserId
+				? await db
+						.select({ fullName: users.fullName, officialEmail: users.email })
+						.from(users)
+						.where(eq(users.id, managerUserId))
+						.limit(1)
+				: [];
+		const problem = !manager
+			? `Pick ${row.fullName}'s reporting manager first: a blue-collar worker needs someone to look after them`
+			: isNoLoginEmail(manager.officialEmail)
+				? `${manager.fullName} has no login either, so they can't look after ${row.fullName}. Pick a manager who can sign in.`
+				: null;
+		// Asked for now: refuse. Already confirmed and the manager just changed:
+		// the confirmation lapses and the row goes back on the review list.
+		if (problem && body.blueCollar === true) throw error(400, problem);
+		if (problem) patch.blueCollar = false;
+	}
+
 	if (Object.keys(patch).length === 0) {
-		throw error(400, 'No recognized fields to update (officialEmail, role, reportsToRowId, reportsToChief, duplicateDecision)');
+		throw error(400, 'No recognized fields to update (officialEmail, role, reportsToRowId, reportsToUserId, reportsToChief, duplicateDecision, blueCollar)');
 	}
 
 	// Editing email/role/manager on a row that only needed review for its REPORTING
@@ -132,6 +194,10 @@ export const PATCH: RequestHandler = async (event) => {
 	// only be cleared by an explicit duplicateDecision above, never implicitly.
 	if (row.status === 'needs_review' && !row.existingUserId && !('duplicateDecision' in body)) {
 		patch.status = 'ready';
+	}
+	// Still no email and not confirmed blue collar: it stays on the review list.
+	if ((patch.status ?? row.status) === 'ready' && isNoLoginEmail(patch.officialEmail ?? row.officialEmail) && !(patch.blueCollar ?? row.blueCollar)) {
+		patch.status = 'needs_review';
 	}
 
 	// A newly chosen manager, or Chief, makes a Team Lead — as at upload. Only an

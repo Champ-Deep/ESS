@@ -1,5 +1,11 @@
 import { redirect } from '@sveltejs/kit';
-import { isChiefReference } from '$lib/chief';
+import { monthlyLeave } from '$lib/server/monthly-leave';
+import { isEarnedLeave } from '$lib/earned-leave';
+import { matchShiftGroup } from '$lib/shift-group-match';
+import { isTopReference, topPositionReference, TOP_REFERENCE_SPELLINGS } from '$lib/chief';
+import { isNoLoginEmail } from '$lib/no-login';
+import { NO_LOGIN } from '$lib/server/password-state';
+import { openablePortals } from '$lib/server/act-as';
 import type { Actions, PageServerLoad } from './$types';
 import { db } from '$lib/server/db/postgres';
 import {
@@ -7,7 +13,6 @@ import {
 	teams,
 	attendance,
 	leaveApplications,
-	leaveAllocations,
 	shiftGroups,
 	holidayCalendars,
 	employeeProfiles,
@@ -38,7 +43,6 @@ import {
 } from '$lib/server/bulk-import';
 import { profileValuesFromImport } from '$lib/server/import-profile-fields';
 import { matchName } from '$lib/server/name-match';
-import { ensureLeaveAllocations } from '$lib/server/leave-accrual';
 import { currentRosterByUser, loadAssignableRosters } from '$lib/server/week-off';
 import { describeRoster, rotationSummary } from '$lib/week-off';
 import { isMailerConfigured } from '$lib/server/mailer';
@@ -74,7 +78,8 @@ function generateTemporaryPassword(): string {
  */
 async function backfillProfile(
 	userId: string,
-	row: { employeeCode: string | null; designation: string | null; teamAndFloor: string | null; profileData: unknown }
+	row: { employeeCode: string | null; designation: string | null; teamAndFloor: string | null; profileData: unknown },
+	shiftGroupId: string | null = null
 ): Promise<string[]> {
 	const [profile] = await db
 		.select()
@@ -87,7 +92,8 @@ async function backfillProfile(
 		...profileValuesFromImport(row.profileData as Record<string, unknown> | null),
 		...(row.employeeCode ? { employeeCode: row.employeeCode.trim().toUpperCase() } : {}),
 		...(row.designation ? { designation: row.designation } : {}),
-		...(row.teamAndFloor ? { teamAndFloor: row.teamAndFloor } : {})
+		...(row.teamAndFloor ? { teamAndFloor: row.teamAndFloor } : {}),
+		...(shiftGroupId ? { shiftGroupId } : {})
 	};
 
 	const patch: Record<string, unknown> = {};
@@ -185,7 +191,9 @@ export const load: PageServerLoad = async ({ locals }) => {
 						// Employee-role manager gets their reports, not their teammates.
 						user.role === 'employee'
 							? inArray(users.id, reach ?? [user.id])
-							: or(eq(users.teamId, user.teamId ?? ''), inArray(users.id, reach ?? [user.id]))
+							: user.teamId
+								? or(eq(users.teamId, user.teamId), inArray(users.id, reach ?? [user.id]))
+								: inArray(users.id, reach ?? [user.id])
 					)
 				);
 
@@ -223,22 +231,14 @@ export const load: PageServerLoad = async ({ locals }) => {
 			and(notHidden, eq(leaveApplications.status, 'pending'), manageable.length ? inArray(leaveApplications.userId, manageable) : sql`false`)
 		);
 
-	const year = new Date().getFullYear();
 	const rosterIds = roster.map((r) => r.id);
-	// Roster balances follow the published policy's accrual, same as the
-	// employee-facing pages.
-	await ensureLeaveAllocations(rosterIds);
-	const allocations =
-		rosterIds.length > 0
-			? await db
-					.select()
-					.from(leaveAllocations)
-					.where(and(inArray(leaveAllocations.userId, rosterIds), eq(leaveAllocations.year, year)))
-			: [];
+	// "EL this month": Earned Leave credited this month less taken or booked
+	// (monthlyLeave keeps allocations current first).
+	const monthlyByUser = await monthlyLeave(rosterIds);
 	const balanceByUser = new Map<string, number>();
-	for (const a of allocations) {
-		const remaining = Number(a.allocatedDays) - Number(a.usedDays);
-		balanceByUser.set(a.userId, (balanceByUser.get(a.userId) ?? 0) + remaining);
+	for (const [userId, figures] of monthlyByUser) {
+		const el = figures.find((f) => isEarnedLeave(f));
+		if (el) balanceByUser.set(userId, el.left);
 	}
 
 	const onLeaveToday =
@@ -294,6 +294,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 						shiftGroupId: employeeProfiles.shiftGroupId,
 						hrUserId: employeeProfiles.hrUserId,
 						reportsToChief: employeeProfiles.reportsToChief,
+						topPosition: employeeProfiles.topPosition,
 						officeTimings: employeeProfiles.officeTimings,
 						shiftType: employeeProfiles.shiftType
 					})
@@ -303,11 +304,44 @@ export const load: PageServerLoad = async ({ locals }) => {
 	const codeByUser = new Map(codeRows.map((r) => [r.userId, r.employeeCode]));
 	const shiftByUser = new Map(codeRows.map((r) => [r.userId, r.shiftGroupId]));
 	const profileByUser = new Map(codeRows.map((r) => [r.userId, r]));
+
+	// Blue-collar workers (src/lib/no-login.ts) can't keep their own profile,
+	// so whoever may open their portal — their leaders, and HR — sees the
+	// details looking after them takes (src/lib/act-as.ts). Job, contact and
+	// emergency details only: government IDs and bank details stay with HR.
+	const portalIds = await openablePortals(user, roster);
+	const detailIds = [...portalIds];
+	const detailRows =
+		detailIds.length > 0
+			? await db
+					.select({
+						userId: employeeProfiles.userId,
+						designation: employeeProfiles.designation,
+						department: employeeProfiles.subProcessDepartment,
+						teamAndFloor: employeeProfiles.teamAndFloor,
+						dateOfJoining: employeeProfiles.dateOfJoining,
+						phone: employeeProfiles.phone,
+						gender: employeeProfiles.gender,
+						dateOfBirth: employeeProfiles.dobActual,
+						dobDocuments: employeeProfiles.dobDocuments,
+						bloodGroup: employeeProfiles.bloodGroup,
+						address: employeeProfiles.address,
+						permanentAddress: employeeProfiles.permanentAddress,
+						emergencyContactName: employeeProfiles.emergencyContactName,
+						emergencyContactRelationship: employeeProfiles.emergencyContactRelationship,
+						emergencyContactPhone: employeeProfiles.emergencyContactPhone
+					})
+					.from(employeeProfiles)
+					.where(inArray(employeeProfiles.userId, detailIds))
+			: [];
+	const detailsByUser = new Map(
+		detailRows.map(({ userId, dobDocuments, ...d }) => [userId, { ...d, dateOfBirth: d.dateOfBirth ?? dobDocuments }])
+	);
 	const shiftGroupNameById = new Map(allShiftGroups.map((g) => [g.id, g.name]));
 	// Names for the reporting-manager and HR columns. Drawn from every user, not
 	// just this roster, because a manager can sit outside the team being viewed.
 	const allPeople = await db
-		.select({ id: users.id, fullName: users.fullName, role: users.role, teamId: users.teamId })
+		.select({ id: users.id, fullName: users.fullName, role: users.role, teamId: users.teamId, email: users.email })
 		.from(users)
 		.where(and(eq(users.isActive, true), notHidden))
 		.orderBy(users.fullName);
@@ -318,7 +352,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 	// would be offering choices Save is going to reject.
 	const assignablePeople = (
 		user.role === 'team_lead' ? allPeople.filter((p) => p.teamId === user.teamId) : allPeople
-	).map((p) => ({ id: p.id, fullName: p.fullName, role: p.role }));
+	).map((p) => ({ id: p.id, fullName: p.fullName, role: p.role, noLogin: isNoLoginEmail(p.email) }));
 
 	// One query for the whole roster — avoids an <img> request per row for
 	// employees who have no picture.
@@ -368,6 +402,10 @@ export const load: PageServerLoad = async ({ locals }) => {
 		id: r.id,
 		fullName: r.fullName,
 		email: r.email,
+		noLogin: isNoLoginEmail(r.email),
+		// Null unless this viewer looks after them (see detailsByUser).
+		details: detailsByUser.get(r.id) ?? null,
+		canOpenPortal: portalIds.has(r.id),
 		employeeCode: codeByUser.get(r.id) ?? null,
 		shiftGroupId: shiftByUser.get(r.id) ?? null,
 		shiftGroupName: shiftGroupNameById.get(shiftByUser.get(r.id) ?? '') ?? null,
@@ -375,6 +413,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		reportsTo: r.reportsTo,
 		reportsToName: r.reportsTo ? (nameById.get(r.reportsTo) ?? null) : null,
 		reportsToChief: !r.reportsTo && Boolean(profileByUser.get(r.id)?.reportsToChief),
+		topPosition: profileByUser.get(r.id)?.topPosition ?? 'chief',
 		hrUserId: profileByUser.get(r.id)?.hrUserId ?? null,
 		hrName: profileByUser.get(r.id)?.hrUserId
 			? (nameById.get(profileByUser.get(r.id)!.hrUserId!) ?? null)
@@ -441,7 +480,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 	if (hasCap(user, 'people.password_activity')) {
 		const entries = await getPasswordActivity();
 		const involvedIds = [
-			...new Set(entries.flatMap((e) => [e.actorUserId, e.targetId].filter((id): id is string => Boolean(id))))
+			...new Set(entries.flatMap((e) => [e.actorUserId, e.targetId].filter((id): id is string => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id ?? ''))))
 		];
 		const involvedUsers =
 			involvedIds.length > 0
@@ -492,7 +531,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		// this page at all — the load redirects them above.
 		canAssignWeekOff: true,
 		isSuperAdmin: user.role === 'super_admin',
-		// Reporting to Chief moves approvals to HR, so it is an admin's call.
+		// Reporting to Chief or Mam moves approvals to HR, so it is an admin's call.
 		canPickChief: user.role === 'super_admin' || user.role === 'admin',
 		// The roster hides the delete control on your own row; the API refuses it too.
 		currentUserId: user.id,
@@ -516,7 +555,10 @@ export const actions: Actions = {
 			shiftGroupId: str('shiftGroupId'),
 			teamId: str('teamId') || null,
 			reportsTo: str('reportsTo') || null,
-			hrUserId: str('hrUserId') || null
+			hrUserId: str('hrUserId') || null,
+			// Asked only when the email is left blank (src/lib/no-login.ts).
+			blueCollar: str('blueCollar') === 'true',
+			employeeCode: str('employeeCode') || null
 		});
 		if (result.success) {
 			// Straight into their team and shift channels in Champ Chat.
@@ -556,7 +598,7 @@ export const actions: Actions = {
 		const parsedRows = parseResult.rows;
 		if (parsedRows.length === 0) {
 			return {
-				bulkImportError: `No employee rows found in "${parseResult.sheetName}" — every row needs at least a name and a work email.`
+				bulkImportError: `No employee rows found in "${parseResult.sheetName}" — every row needs at least a name, and a work email or a reporting manager.`
 			};
 		}
 
@@ -571,7 +613,9 @@ export const actions: Actions = {
 		// the case where the sheet lists a different email for someone who already has a
 		// real login (e.g. their actual account uses a different domain). Surfaced as a
 		// review flag rather than silently creating a duplicate account for the same person.
-		const allExistingUsers = await db.select({ id: users.id, fullName: users.fullName, email: users.email }).from(users).where(notHidden);
+		const allExistingUsers = await db.select({ id: users.id, fullName: users.fullName, email: users.email, isActive: users.isActive }).from(users).where(notHidden);
+		// People already in the portal who could manage someone from this sheet.
+		const existingManagers = allExistingUsers.filter((u) => u.isActive && !isNoLoginEmail(u.email));
 
 		// The employee code is unique and is the attendance join key, so a code
 		// already taken by someone else has to be caught before apply — otherwise
@@ -628,6 +672,9 @@ export const actions: Actions = {
 					else if (nameMatch) status = 'needs_review';
 					// A code already held by someone else can't be applied as-is.
 					else if (codeOwner) status = 'needs_review';
+					// No work email: someone has to say they are blue collar, and give
+					// them a manager, before the row can be created.
+					else if (isNoLoginEmail(r.officialEmail)) status = 'needs_review';
 
 					const notes = [
 						...(parseResult.repairs[rowIndex] ?? []),
@@ -671,16 +718,22 @@ export const actions: Actions = {
 		for (let i = 0; i < parsedRows.length; i++) {
 			const suggestedIndex = suggestReportsToIndex(parsedRows[i].reportingAuthorityRaw, parsedRows, i);
 			const hasRawAuthority = Boolean(parsedRows[i].reportingAuthorityRaw);
-			// "Chief" is not a row to find: it is recorded as reporting to Chief.
-			const needsReviewForReportingLine =
-				hasRawAuthority && suggestedIndex === null && !isChiefReference(parsedRows[i].reportingAuthorityRaw);
+			const isTop = isTopReference(parsedRows[i].reportingAuthorityRaw);
+			// Not in this sheet: someone already in the portal by that name.
+			const existingManager =
+				suggestedIndex === null && hasRawAuthority && !isTop
+					? suggestExistingUserMatch(parsedRows[i].reportingAuthorityRaw!, existingManagers)
+					: null;
+			// "Chief" or "Mam" is not a row to find: it is recorded as reporting to that position.
+			const needsReviewForReportingLine = hasRawAuthority && suggestedIndex === null && !existingManager && !isTop;
 			const alreadyDecided = insertedRows[i].status !== 'ready';
 
-			if (suggestedIndex !== null || (needsReviewForReportingLine && !alreadyDecided)) {
+			if (suggestedIndex !== null || existingManager || (needsReviewForReportingLine && !alreadyDecided)) {
 				await db
 					.update(bulkImportRows)
 					.set({
 						reportsToRowId: suggestedIndex !== null ? insertedRows[suggestedIndex].id : null,
+						reportsToUserId: existingManager?.id ?? null,
 						status: needsReviewForReportingLine && !alreadyDecided ? 'needs_review' : insertedRows[i].status
 					})
 					.where(eq(bulkImportRows.id, insertedRows[i].id));
@@ -688,7 +741,7 @@ export const actions: Actions = {
 		}
 
 		// The preview shows the access they will get: anyone the sheet puts under
-		// Chief, or whom another row reports to, is a Team Lead — the same rule the
+		// Chief or Mam, or whom another row reports to, is a Team Lead — the same rule the
 		// database applies to live logins (drizzle/0030_auto_team_lead.sql). Only
 		// Employees move; the Role column stays editable before applying.
 		await db
@@ -699,7 +752,7 @@ export const actions: Actions = {
 					eq(bulkImportRows.importId, importRow.id),
 					eq(bulkImportRows.role, 'employee'),
 					sql`(${bulkImportRows.id} in (select reports_to_row_id from bulk_import_rows where import_id = ${importRow.id} and reports_to_row_id is not null)
-						or lower(trim(${bulkImportRows.reportingAuthorityRaw})) in ('chief', 'cheif', 'the chief'))`
+						or lower(trim(${bulkImportRows.reportingAuthorityRaw})) in (${sql.join(TOP_REFERENCE_SPELLINGS.map((t) => sql`${t}`), sql`, `)}))`
 				)
 			);
 
@@ -764,6 +817,12 @@ export const actions: Actions = {
 		if (pending.length > 0) {
 			return { bulkImportError: `${pending.length} row(s) still need review before this import can be applied` };
 		}
+		// The review screen keeps these on the list; checked again here because a
+		// no-login account nobody looks after would be unreachable.
+		const unconfirmed = rows.filter((r) => r.status === 'ready' && isNoLoginEmail(r.officialEmail) && (!r.blueCollar || (!r.reportsToRowId && !r.reportsToUserId)));
+		if (unconfirmed.length > 0) {
+			return { bulkImportError: `${unconfirmed.length} row(s) have no work email: confirm each as blue collar with a reporting manager, or add an email` };
+		}
 
 		// When set, every credentials mail for this run goes to this one address
 		// instead of to the employees — for verifying the template and the Resend
@@ -771,6 +830,11 @@ export const actions: Actions = {
 		const redirectAllMailTo = String(form.get('sendCredentialsTo') ?? '').trim().toLowerCase();
 
 		const rowIdToUserId = new Map<string, string>();
+		// Each person's shift group, from the sheet's "Type of shift" (or the
+		// only group there is): without one they see no holiday calendar.
+		const shiftGroupRefs = await db.select({ id: shiftGroups.id, key: shiftGroups.key, name: shiftGroups.name }).from(shiftGroups);
+		const shiftFor = (row: { profileData: unknown }) =>
+			matchShiftGroup(((row.profileData ?? {}) as Record<string, unknown>).shiftType as string | null | undefined, shiftGroupRefs);
 		// Existing people whose blank profile columns this run filled in.
 		let backfilledCount = 0;
 		// Credentials handover, reported back so the Super Admin can see who still
@@ -792,7 +856,7 @@ export const actions: Actions = {
 					// column null forever, since re-uploading only ever skips the row.
 					// Fills blanks only: a value HR has since corrected in the portal
 					// is never overwritten by an older spreadsheet.
-					const filled = await backfillProfile(row.existingUserId, row);
+					const filled = await backfillProfile(row.existingUserId, row, shiftFor(row));
 					if (filled.length > 0) backfilledCount++;
 				}
 				continue;
@@ -804,7 +868,11 @@ export const actions: Actions = {
 			// roughly 50ms, which is the dominant per-row cost of a large import.
 			// With Clerk as the sign-in nobody is given one: they sign in with an
 			// emailed code and choose their own (password-state.ts).
-			const { temporaryPassword, passwordHash } = await newLoginCredentials();
+			// No work email (src/lib/no-login.ts): on the roster, never a login.
+			const noLogin = isNoLoginEmail(row.officialEmail);
+			const { temporaryPassword, passwordHash } = noLogin
+				? { temporaryPassword: null, passwordHash: NO_LOGIN }
+				: await newLoginCredentials();
 
 			const [createdUser] = await db
 				.insert(users)
@@ -814,7 +882,7 @@ export const actions: Actions = {
 					role: row.role,
 					fullName: row.fullName,
 					isActive: true,
-					mustChangePassword: true,
+					mustChangePassword: !noLogin,
 					// Kept readable on the roster until this person signs in and
 					// chooses their own. A master-tracker batch is exactly where the
 					// credentials mail goes wrong at scale, and re-running the import
@@ -826,9 +894,11 @@ export const actions: Actions = {
 			rowIdToUserId.set(row.id, createdUser.id);
 			// One bad address must not stop the rest of the batch; whoever is
 			// missing from Clerk is picked up by scripts/migrate-to-clerk.ts.
-			await addNewLoginToClerk(createdUser.id, temporaryPassword).catch((err) =>
-				console.error('[clerk] bulk create sync failed for', createdUser.email, err)
-			);
+			if (!noLogin) {
+				await addNewLoginToClerk(createdUser.id, temporaryPassword).catch((err) =>
+					console.error('[clerk] bulk create sync failed for', createdUser.email, err)
+				);
+			}
 
 			await db.insert(employeeProfiles).values({
 				userId: createdUser.id,
@@ -838,19 +908,21 @@ export const actions: Actions = {
 				designation: row.designation,
 				teamAndFloor: row.teamAndFloor,
 				directReportingAuthority: row.reportingAuthorityRaw,
-				// "Chief" in the sheet is the head of the company, not a person to
-				// link — recorded as a flag so approvals go straight to HR.
-				reportsToChief: !row.reportsToRowId && isChiefReference(row.reportingAuthorityRaw),
+				// "Chief" or "Mam" in the sheet is a head of the company, not a
+				// person to link — recorded as a flag so approvals go straight to HR.
+				reportsToChief: !row.reportsToRowId && !row.reportsToUserId && isTopReference(row.reportingAuthorityRaw),
+				topPosition: topPositionReference(row.reportingAuthorityRaw) ?? 'chief',
 				dottedLineReportingAuthority: row.dottedLineAuthorityRaw,
 				// Everything else the spreadsheet carried.
-				...profileValuesFromImport(row.profileData)
+				...profileValuesFromImport(row.profileData),
+				shiftGroupId: shiftFor(row)
 			});
 
 			await db.update(bulkImportRows).set({ status: 'created', createdUserId: createdUser.id }).where(eq(bulkImportRows.id, row.id));
 
 			// The credentials email is not sent here: it is queued after the loop and
 			// waits for an admin's approval (src/lib/server/login-emails.ts).
-			queuedUserIds.push(createdUser.id);
+			if (!noLogin) queuedUserIds.push(createdUser.id);
 
 			await logActivity({
 				actorUserId: actor.id,
@@ -863,7 +935,7 @@ export const actions: Actions = {
 					email: createdUser.email,
 					importId,
 					role: row.role,
-					welcomeEmail: 'queued for approval',
+					welcomeEmail: noLogin ? 'none: no login' : 'queued for approval',
 					welcomeEmailRedirectedTo: redirectAllMailTo || null
 				}
 			});
@@ -875,7 +947,7 @@ export const actions: Actions = {
 			const userId = rowIdToUserId.get(row.id);
 			if (!userId) continue;
 
-			const managerUserId = row.reportsToRowId ? rowIdToUserId.get(row.reportsToRowId) ?? null : null;
+			const managerUserId = row.reportsToRowId ? rowIdToUserId.get(row.reportsToRowId) ?? null : (row.reportsToUserId ?? null);
 
 			let teamId: string | null = null;
 			if (row.role === 'team_lead') {
@@ -889,7 +961,7 @@ export const actions: Actions = {
 		for (const row of rows) {
 			if (row.status !== 'ready' || row.role === 'team_lead') continue;
 			const userId = rowIdToUserId.get(row.id);
-			const managerUserId = row.reportsToRowId ? rowIdToUserId.get(row.reportsToRowId) ?? null : null;
+			const managerUserId = row.reportsToRowId ? rowIdToUserId.get(row.reportsToRowId) ?? null : (row.reportsToUserId ?? null);
 			if (!userId || !managerUserId) continue;
 
 			const [manager] = await db.select({ teamId: users.teamId }).from(users).where(eq(users.id, managerUserId)).limit(1);

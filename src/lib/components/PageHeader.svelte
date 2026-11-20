@@ -42,14 +42,15 @@
 	const back = $derived(crumb.find((c) => typeof c !== 'string') as { label: string; href: string } | undefined);
 </script>
 
-<header class="ess-page-head bar">
+<!-- data-tour: anchors for the guided tour (src/lib/tour/steps.ts). -->
+<header class="ess-page-head bar" data-tour="page">
 	{#if back && typeof crumb[0] !== 'string'}
 		<a class="back" href={back.href} title="Back to {back.label}">{back.label}<span aria-hidden="true">/</span></a>
 	{/if}
 	<h1 class="ess-page-title bar-title" title={sub ? `${title} ${sub}` : title}>{name}</h1>
-	{#if tabs}<div class="bar-tabs">{@render tabs()}</div>{/if}
+	{#if tabs}<div class="bar-tabs" data-tour="page-tabs">{@render tabs()}</div>{/if}
 	{#if children}<div class="bar-extra">{@render children()}</div>{/if}
-	{#if actions}<div class="ess-page-head__actions bar-actions">{@render actions()}</div>{/if}
+	{#if actions}<div class="ess-page-head__actions bar-actions" data-tour="page-actions">{@render actions()}</div>{/if}
 </header>
 
 <style>

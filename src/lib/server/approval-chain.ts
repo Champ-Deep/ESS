@@ -15,8 +15,8 @@
  *   else          corrections change balances and the attendance record, so HR
  *                 sees them after the manager has signed off.
  *
- * People who report to Chief (src/lib/chief.ts) have no manager to ask: Chief
- * is the head of the company and has no login. Their manager stage belongs to
+ * People who report to Chief or Mam (src/lib/chief.ts) have no manager to ask:
+ * they head the company and have no login. Their manager stage belongs to
  * their concerned HR, so that one person approves once and it is done — it
  * never falls through to a team lead the way an unlinked manager does.
  */

@@ -100,6 +100,11 @@
 		<div class="acts">
 			{#if m.state === 'upcoming'}
 				{#if m.canJoin}<a class="ess-btn ess-btn--primary" href="/hub/meetings/{m.id}/join" target="_blank" rel="noopener" data-sveltekit-reload><Video size={16} /> {m.isHost ? 'Start' : 'Join'}{data.hub.zoom ? ' Zoom' : ''}</a>{/if}
+				<!-- Started with no call to join (no Zoom, or the call has closed):
+				     nothing will move it on by itself, so the host adds the minutes. -->
+				{#if m.isHost && !m.canJoin && Date.parse(m.startedAt) <= Date.now()}
+					<button type="button" class="ess-btn ess-btn--secondary ess-btn--sm" onclick={() => (pasteFor = { id: m.id, topic: m.topic })}><ClipboardPaste size={14} /> Paste notes</button>
+				{/if}
 				{#if m.isHost}
 					{#if cancelling === m.id}
 						<button type="button" class="ess-btn ess-btn--danger ess-btn--sm" onclick={() => cancel(m.id)}>Cancel meeting</button>

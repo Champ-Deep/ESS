@@ -186,7 +186,7 @@ export async function serialize(viewer: SessionUser, rows: Row[], reach?: Reach)
 			subtasks: { done: s?.done ?? 0, total: s?.total ?? 0 },
 			completedAt: t.completedAt?.toISOString() ?? null,
 			updatedAt: t.updatedAt.toISOString(),
-			can: { edit, approve: canApprove(viewer, t) }
+			can: { edit, approve: canApprove(viewer, t), delete: canDelete(viewer, t, r) }
 		};
 	});
 }
@@ -624,12 +624,16 @@ export async function respondToTask(viewer: SessionUser, id: string, decision: '
 	return { ok: true, task: null };
 }
 
+/** Who may delete: the maker, anyone above them, or a Super Admin (not the assignee). */
+function canDelete(viewer: SessionUser, t: { createdBy: string }, reach: { treeIds: string[] }): boolean {
+	return t.createdBy === viewer.id || reach.treeIds.includes(t.createdBy) || viewer.role === 'super_admin';
+}
+
 export async function deleteTask(viewer: SessionUser, id: string): Promise<Result> {
 	const t = await load(id);
 	const reach = await reachFor(viewer);
 	if (!t || !canSee(viewer, t, reach)) return { ok: false, message: 'That task is not available to you', status: 404 };
-	const mayDelete = t.createdBy === viewer.id || reach.treeIds.includes(t.createdBy) || viewer.role === 'super_admin';
-	if (!mayDelete) return { ok: false, message: 'Only the person who made it, or their lead, can delete a task', status: 403 };
+	if (!canDelete(viewer, t, reach)) return { ok: false, message: 'Only the person who made it, or their lead, can delete a task', status: 403 };
 	await db.delete(tasks).where(eq(tasks.id, id));
 	await logActivity({ actorUserId: viewer.id, action: 'task.delete', targetType: 'task', targetId: id, details: { title: t.title, assigneeId: t.assigneeId } }).catch(() => {});
 	await changed(t);

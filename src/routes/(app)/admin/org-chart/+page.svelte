@@ -11,6 +11,7 @@
 	import Avatar from '$lib/components/Avatar.svelte';
 	import { flattenDepthFirst, reportCount, type OrgNode } from '$lib/org-chart';
 	import { BASE_ROLE_LABEL } from '$lib/capabilities';
+	import { topLabel } from '$lib/chief';
 
 	let { data } = $props();
 
@@ -21,14 +22,21 @@
 	/** Expanded to this depth on load — the whole org at once is unreadable. */
 	const OPEN_TO_DEPTH = 1;
 
-	/** Everyone under Chief, at any depth. */
-	const chiefTotal = $derived(chart.underChief.reduce((n, node) => n + 1 + reportCount(node), 0));
+	/** Everyone under a top position, at any depth. */
+	const totalUnder = (nodes: OrgNode[]) => nodes.reduce((n, node) => n + 1 + reportCount(node), 0);
+	/** Chief and Mam, the two heads of the company, each with the trees under them. */
+	const heads = $derived(
+		[
+			{ label: 'Chief', nodes: chart.underChief },
+			{ label: 'Mam', nodes: chart.underMam }
+		].filter((h) => h.nodes.length > 0)
+	);
 
 	const roleLabel = (role: string) => BASE_ROLE_LABEL[role as keyof typeof BASE_ROLE_LABEL] ?? role.replace('_', ' ');
 	const teamOf = (id: string) => teamNames[id] ?? null;
 
 	/* ---------- lookups for the detail panel ---------- */
-	const everyone = $derived(flattenDepthFirst([...chart.underChief, ...chart.roots, ...chart.orphans]));
+	const everyone = $derived(flattenDepthFirst([...chart.underChief, ...chart.underMam, ...chart.roots, ...chart.orphans]));
 	const nodeById = $derived(new Map(everyone.map((n) => [n.person.id, n])));
 	const parentOf = $derived.by(() => {
 		const m = new Map<string, OrgNode>();
@@ -113,7 +121,7 @@
 
 <div class="ess-split ess-fill org">
 	<div class="ess-stack">
-		<section class="ess-card ess-fill-card chart-card">
+		<section class="ess-card ess-fill-card chart-card" data-tour="org-chart">
 			<div class="ess-card-head">
 				<h2 class="ess-h2">Organisation chart</h2>
 				<span class="ess-caption">{stats.total} active {stats.total === 1 ? 'person' : 'people'}</span>
@@ -136,7 +144,7 @@
 				</div>
 			</div>
 
-			{#if chart.roots.length === 0 && chart.underChief.length === 0 && chart.orphans.length === 0}
+			{#if chart.roots.length === 0 && heads.length === 0 && chart.orphans.length === 0}
 				<div class="ess-empty">
 					<span class="ess-empty__icon"><Network size={22} /></span>
 					<p class="ess-empty__title">No active people to chart yet.</p>
@@ -153,33 +161,36 @@
 				<div class="canvas ess-scroll">
 					<div class="tree-wrap" style="zoom: {zoom}">
 						<!--
-							Chief heads the chart as a position, not a person: there is no
-							account behind it, so it carries no code or role, and the people
-							under it have their approvals handled by their concerned HR.
+							Chief and Mam head the chart as positions, not people: there is
+							no account behind either, so they carry no code or role, and the
+							people under them have their approvals handled by their concerned HR.
 						-->
-						{#if chart.underChief.length > 0}
+						{#if heads.length > 0}
 							<ul class="tree">
-								<li class="tree-item">
-									<div class="tree-node">
-										<div class="node chief">
-											<span class="ess-tile ess-tile--lg ess-tile--round"><Network size={22} strokeWidth={1.75} /></span>
-											<span class="node-body">
-												<span class="node-name">Chief</span>
-												<span class="node-role">Head of the company</span>
-												<span class="node-meta"><span>{chiefTotal} {chiefTotal === 1 ? 'report' : 'reports'}</span></span>
-											</span>
+								{#each heads as head (head.label)}
+									{@const total = totalUnder(head.nodes)}
+									<li class="tree-item">
+										<div class="tree-node">
+											<div class="node chief">
+												<span class="ess-tile ess-tile--lg ess-tile--round"><Network size={22} strokeWidth={1.75} /></span>
+												<span class="node-body">
+													<span class="node-name">{head.label}</span>
+													<span class="node-role">Head of the company</span>
+													<span class="node-meta"><span>{total} {total === 1 ? 'report' : 'reports'}</span></span>
+												</span>
+											</div>
 										</div>
-									</div>
-									<ul class="tree-children">
-										{#each chart.underChief as node (node.person.id)}
-											{@render branch(node)}
-										{/each}
-									</ul>
-								</li>
+										<ul class="tree-children">
+											{#each head.nodes as node (node.person.id)}
+												{@render branch(node)}
+											{/each}
+										</ul>
+									</li>
+								{/each}
 							</ul>
 						{/if}
 						{#if chart.roots.length > 0}
-							{#if chart.underChief.length > 0}<p class="no-line">No reporting line on file</p>{/if}
+							{#if heads.length > 0}<p class="no-line">No reporting line on file</p>{/if}
 							<ul class="tree">
 								{#each chart.roots as root (root.person.id)}
 									{@render branch(root)}
@@ -228,7 +239,7 @@
 				<div class="ess-row">
 					<span class="ess-tile ess-tile--sm ess-tile--round ess-tile--ok"><CircleCheck size={16} /></span>
 					<span class="ess-row__body">
-						<span class="ess-row__title">{stats.chiefCount} report to Chief</span>
+						<span class="ess-row__title">{stats.chiefCount} report to Chief{#if stats.mamCount > 0}, {stats.mamCount} to Mam{/if}</span>
 						<span class="ess-row__meta">{stats.withManager} of {stats.total} with a manager on file</span>
 					</span>
 				</div>
@@ -269,7 +280,7 @@
 						<ChevronRight size={15} class="chev" />
 					</button>
 				{:else if p.reportsToChief}
-					<p class="ess-caption">Chief — the head of the company</p>
+					<p class="ess-caption">{topLabel(p.topPosition)} — the head of the company</p>
 				{:else}
 					<p class="ess-caption">— No reporting line on file</p>
 				{/if}

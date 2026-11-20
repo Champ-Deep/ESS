@@ -11,8 +11,10 @@
 	import Moon from '@lucide/svelte/icons/moon';
 	import PanelLeft from '@lucide/svelte/icons/panel-left';
 	import PanelLeftDashed from '@lucide/svelte/icons/panel-left-dashed';
+	import Compass from '@lucide/svelte/icons/compass';
 	import Avatar from './Avatar.svelte';
 	import { hub } from '$lib/hub/client.svelte';
+	import { tour } from '$lib/tour/tour.svelte';
 	import type { Role } from '$lib/server/auth';
 
 	/**
@@ -39,6 +41,8 @@
 		teamPeek?: { people: { id: string; fullName: string; hasPicture: boolean }[]; total: number } | null;
 		/** Where Add employee goes, or null when this login cannot create logins. */
 		addEmployeeHref?: string | null;
+		/** False inside a blue-collar worker's portal: they have no login. */
+		canChangePassword?: boolean;
 	}
 
 	let {
@@ -53,7 +57,8 @@
 		canAdmin = false,
 		canTeam,
 		teamPeek = null,
-		addEmployeeHref = null
+		addEmployeeHref = null,
+		canChangePassword = true
 	}: Props = $props();
 
 	// The same sections as the rail, as text links.
@@ -179,7 +184,7 @@
 	</nav>
 
 	<div class="right" bind:this={cluster}>
-		<button type="button" class="search" onclick={openSearch} aria-label="Search or ask Champ" title="Search (Ctrl K)">
+		<button type="button" class="search" data-tour="search" onclick={openSearch} aria-label="Search or ask Champ" title="Search (Ctrl K)">
 			<Search size={15} strokeWidth={2} />
 			<span class="search-label">Search here</span>
 		</button>
@@ -194,7 +199,7 @@
 		{/if}
 
 		{#if addEmployeeHref}
-			<a class="add" href={addEmployeeHref} aria-label="Add employee">
+			<a class="add" data-tour="add-employee" href={addEmployeeHref} aria-label="Add employee">
 				<Plus size={15} strokeWidth={2.4} />
 				<span class="add-label">Add employee</span>
 			</a>
@@ -206,6 +211,7 @@
 		<a
 			href="/chat?c=announcements"
 			class="round bell"
+			data-tour="bell"
 			aria-label={notifications.count ? `${notifications.count} unread announcement${notifications.count === 1 ? '' : 's'}` : 'Announcements'}
 			title="Announcements"
 		>
@@ -226,7 +232,7 @@
 		</button>
 
 		<div class="me">
-			<button type="button" class="me-btn" aria-haspopup="menu" aria-expanded={menuOpen} aria-label="Your account" onclick={() => (menuOpen = !menuOpen)}>
+			<button type="button" class="me-btn" data-tour="account" aria-haspopup="menu" aria-expanded={menuOpen} aria-label="Your account" onclick={() => (menuOpen = !menuOpen)}>
 				<Avatar {userId} {fullName} {hasPicture} size="md" version={pictureVersion ?? undefined} />
 			</button>
 			{#if menuOpen}
@@ -237,7 +243,18 @@
 					</div>
 					<div class="menu-sep"></div>
 					<a role="menuitem" href="/profile" onclick={() => (menuOpen = false)}><User size={15} /> My profile</a>
-					<a role="menuitem" href="/change-password" onclick={() => (menuOpen = false)}><KeyRound size={15} /> Change password</a>
+					{#if canChangePassword}
+						<a role="menuitem" href="/change-password" onclick={() => (menuOpen = false)}><KeyRound size={15} /> Change password</a>
+					{/if}
+					<button
+						type="button"
+						role="menuitem"
+						class="menu-btn"
+						onclick={() => {
+							menuOpen = false;
+							tour.start(0);
+						}}><Compass size={15} /> Take the tour</button
+					>
 					<div class="menu-sep"></div>
 
 					<div class="pref">
@@ -499,6 +516,7 @@
 		color: var(--ess-text-muted);
 	}
 	.menu a,
+	.menu .menu-btn,
 	.menu .logout {
 		display: flex;
 		align-items: center;
@@ -515,6 +533,7 @@
 		cursor: pointer;
 	}
 	.menu a:hover,
+	.menu .menu-btn:hover,
 	.menu .logout:hover {
 		background: var(--ess-surface-hover);
 	}

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { invalidateAll } from '$app/navigation';
 	import Calendar from '@lucide/svelte/icons/calendar';
 	import Heart from '@lucide/svelte/icons/heart';
 	import HeartPulse from '@lucide/svelte/icons/heart-pulse';
@@ -106,6 +107,26 @@
 			data.myApplications[0] ||
 			null
 	);
+
+	// Withdraw a request still waiting on a decision (api/leave/[id]/withdraw).
+	let withdrawing = $state(false);
+	let withdrawError = $state('');
+	async function withdraw(id: string) {
+		if (!confirm('Withdraw this leave request? Your approvers will no longer see it.')) return;
+		withdrawing = true;
+		withdrawError = '';
+		try {
+			const res = await fetch(`/api/leave/${id}/withdraw`, { method: 'POST' });
+			if (!res.ok) {
+				const body = await res.json().catch(() => ({}));
+				withdrawError = body.message ?? 'The request could not be withdrawn. Try again.';
+				return;
+			}
+			await invalidateAll();
+		} finally {
+			withdrawing = false;
+		}
+	}
 
 	type StepState = 'done' | 'current' | 'todo';
 	const progress = $derived.by((): { label: string; meta: string; state: StepState }[] => {
@@ -235,14 +256,14 @@
 			{#if data.allocations.length > 0 || data.monthlyBalances.length > 0}
 				<div class="balances">
 					{#each data.allocations as row (row.allocation.id)}
-						{@const remaining = Number(row.allocation.allocatedDays) - Number(row.allocation.usedDays)}
+						{@const remaining = row.month.left}
 						{@const look = typeLook(row.type)}
 						<div class="ess-metric">
 							<span class="ess-tile {look.tone}"><look.icon size={20} strokeWidth={1.75} /></span>
 							<div class="ess-metric__body">
 								<span class="ess-metric__label">{row.type.name}</span>
 								<span class="ess-metric__value">{fmtDays(remaining)}</span>
-								<span class="ess-metric__meta">out of {fmtDays(row.allocation.allocatedDays)}</span>
+								<span class="ess-metric__meta">out of {fmtDays(row.month.credited)} this month</span>
 							</div>
 						</div>
 					{/each}
@@ -380,6 +401,14 @@
 							<dd>{selected.application.decisionNote}</dd>
 						{/if}
 					</dl>
+					{#if selected.application.status === 'pending' || selected.application.status === 'escalated'}
+						<div class="withdraw">
+							{#if withdrawError}<p class="ess-alert ess-alert--danger" role="alert">{withdrawError}</p>{/if}
+							<button type="button" class="ess-btn ess-btn--secondary ess-btn--sm" disabled={withdrawing} onclick={() => withdraw(selected.application.id)}>
+								{withdrawing ? 'Withdrawing…' : 'Withdraw request'}
+							</button>
+						</div>
+					{/if}
 				{:else}
 					<div class="ess-empty fill-empty">
 						<span class="ess-empty__icon"><Clock size={20} strokeWidth={1.75} /></span>
@@ -393,12 +422,12 @@
 			{#if data.allocations.length > 0 || data.monthlyBalances.length > 0}
 				<section class="ess-card usage-card">
 					<div class="ess-card-head">
-						<h2 class="ess-h2">Leave usage</h2>
+						<h2 class="ess-h2">Leave usage · this month</h2>
 					</div>
 					<div class="usage">
 						{#each data.allocations as row (row.allocation.id)}
-							{@const total = Number(row.allocation.allocatedDays)}
-							{@const used = Number(row.allocation.usedDays)}
+							{@const total = row.month.credited}
+							{@const used = row.month.used}
 							{@const look = typeLook(row.type)}
 							<div class="usage-row">
 								<span class="ess-tile ess-tile--sm {look.tone}"><look.icon size={17} strokeWidth={1.75} /></span>
@@ -561,7 +590,7 @@
 					<div class="panels">
 						{#if r.balanceBefore != null && after != null}
 							<div class="panel">
-								<span class="panel-title">Leave balance</span>
+								<span class="panel-title">Leave balance · this month</span>
 								<div class="balance-flow">
 									<div><strong class="big">{fmtDays(r.balanceBefore)}</strong><small>Before this request</small></div>
 									<ArrowRight size={18} class="flow-arrow" />
@@ -801,6 +830,12 @@
 
 	.progress {
 		margin: 2px 0 14px;
+	}
+	.withdraw {
+		display: grid;
+		gap: 8px;
+		justify-items: start;
+		margin-top: 12px;
 	}
 	.selected-head {
 		display: flex;

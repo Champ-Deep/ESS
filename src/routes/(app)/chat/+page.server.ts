@@ -1,6 +1,6 @@
 import { redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { hasCap } from '$lib/server/capabilities';
+import { hasCap, answerableDesks } from '$lib/server/capabilities';
 import { sidebarFor } from '$lib/server/chat/channels';
 import { channelCreationScope } from '$lib/server/chat/access';
 import { loadFeed } from '$lib/server/announcements';
@@ -43,6 +43,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 			postAnnouncements: canPost,
 			createChannels: channelCreationScope(user),
 			hrDesk: hasCap(user, 'chat.hr_desk'),
+			desks: answerableDesks(user),
 			moderate: hasCap(user, 'chat.moderate'),
 			export: hasCap(user, 'chat.export'),
 			mentionAll: hasCap(user, 'chat.mention_all'),

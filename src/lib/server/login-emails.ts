@@ -5,7 +5,8 @@ import type { SessionUser } from '$lib/server/auth';
 import { hasCap } from '$lib/server/capabilities';
 import { logActivity } from '$lib/server/db/mongo';
 import { isMailerConfigured, sendWelcomeEmail } from '$lib/server/mailer';
-import { clerkAuthActive } from '$lib/server/clerk';
+import { clerk, clerkAuthActive, clerkConfigured, ensureClerkAccount } from '$lib/server/clerk';
+import { isNoLoginEmail } from '$lib/no-login';
 import { postToFeed } from '$lib/server/chat/cards';
 import { notHidden } from '$lib/server/hidden-users';
 
@@ -244,6 +245,24 @@ export async function sendNextLoginEmail(now = new Date()): Promise<'sent' | 'fa
 	`);
 	const job = (claimed.rows as { id: string; userId: string; sendTo: string | null }[])[0];
 	if (!job) return 'idle';
+	try {
+		return await deliverClaimed(job, 'system', false);
+	} catch (err) {
+		// Anything thrown after the claim (the provider unreachable, a timeout)
+		// marks the row failed instead of leaving it on "Sending" for good.
+		const message = err instanceof Error ? err.message : String(err);
+		await db.update(loginEmails).set({ status: 'failed', error: `Could not reach the mail provider: ${message.slice(0, 200)}` }).where(eq(loginEmails.id, job.id));
+		return 'failed';
+	}
+}
+
+/**
+ * Sends one claimed row. `actorId` is who sent it ('system' for the queue);
+ * `explicit` is an admin pressing Send now / Resend: then someone who has
+ * already signed in still gets their username and how to sign in (without a
+ * password, since theirs is their own), rather than being skipped.
+ */
+async function deliverClaimed(job: { id: string; userId: string; sendTo: string | null }, actorId: string, explicit: boolean): Promise<'sent' | 'failed' | 'skipped'> {
 
 	const [u] = await db
 		.select({ fullName: users.fullName, email: users.email, temp: users.temporaryPassword, mustChange: users.mustChangePassword, isActive: users.isActive })
@@ -257,14 +276,15 @@ export async function sendNextLoginEmail(now = new Date()): Promise<'sent' | 'fa
 		await finish('skipped', 'The login has been deactivated');
 		return 'skipped';
 	}
-	if (!u.mustChange) {
+	if (!u.mustChange && !explicit) {
 		await finish('skipped', 'They have already signed in and set their own password');
 		return 'skipped';
 	}
 	// With Clerk as the sign-in the email carries no password: the person signs
-	// in with an emailed code and chooses their own (password-state.ts).
-	const temporaryPassword = clerkAuthActive() ? null : u.temp;
-	if (!clerkAuthActive() && !u.temp) {
+	// in with an emailed code and chooses their own (password-state.ts). Someone
+	// who has set their own password is sent no password either.
+	const temporaryPassword = clerkAuthActive() || !u.mustChange ? null : u.temp;
+	if (!clerkAuthActive() && u.mustChange && !u.temp) {
 		await finish('failed', 'This login has no password yet (it was made while Clerk was the sign-in). Re-issue it to give it a temporary password, or switch the sign-in back to Clerk.');
 		return 'failed';
 	}
@@ -274,9 +294,9 @@ export async function sendNextLoginEmail(now = new Date()): Promise<'sent' | 'fa
 		return 'failed';
 	}
 	const mail = await sendWelcomeEmail({ fullName: u.fullName, username: u.email, temporaryPassword, to });
-	await finish(mail.ok ? 'sent' : 'failed', mail.ok ? null : (mail.error ?? 'The mail provider refused it'));
+	await finish(mail.ok ? 'sent' : 'failed', mail.ok ? (temporaryPassword ? null : explicit && !u.mustChange ? 'Sign-in details only: they had already set their own password' : null) : (mail.error ?? 'The mail provider refused it'));
 	await logActivity({
-		actorUserId: 'system',
+		actorUserId: actorId,
 		action: 'login_email.send',
 		targetType: 'user',
 		targetId: job.userId,
@@ -298,6 +318,141 @@ export function startLoginEmailSender() {
 	const tick = () =>
 		sendNextLoginEmail().catch((err) => console.error('[login-emails] send failed:', err instanceof Error ? err.message : err));
 	setTimeout(() => void recoverStuckSends().catch(() => {}), 20_000);
+	setInterval(() => void recoverStuckSends().catch(() => {}), 60_000);
 	setInterval(tick, 5_000);
 }
 
+
+/* ---------- send now, resend, and finding anyone ---------- */
+
+export type SendNowResult = { fullName: string; email: string; outcome: 'sent' | 'failed' | 'skipped'; note: string | null };
+
+/**
+ * Admin › Login delivery › Send now / Resend: the chosen emails go out at once,
+ * one after another, without waiting for the queue's cadence. Works on any
+ * row (pending, approved, failed, sent, skipped, cancelled), except one the
+ * queue is sending this very moment.
+ */
+export async function sendLoginEmailsNow(actor: SessionUser, ids: string[]): Promise<{ ok: true; count: number; results: SendNowResult[] } | { ok: false; message: string }> {
+	const denied = gate(actor);
+	if (denied) return denied as { ok: false; message: string };
+	if (!isMailerConfigured()) return { ok: false, message: 'No mail provider is set up (RESEND_API_KEY), so nothing can be sent' };
+	const results: SendNowResult[] = [];
+	for (const id of [...new Set(ids)].slice(0, 50)) {
+		const claimed = await db.execute(sql`
+			update login_emails set status = 'sending', attempted_at = now(), approved_by = coalesce(approved_by, ${actor.id}), approved_at = coalesce(approved_at, now())
+			where id = ${id} and status <> 'sending'
+			returning id, user_id as "userId", send_to as "sendTo"
+		`);
+		const job = (claimed.rows as { id: string; userId: string; sendTo: string | null }[])[0];
+		if (!job) continue;
+		let outcome: SendNowResult['outcome'];
+		try {
+			outcome = await deliverClaimed(job, actor.id, true);
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			await db.update(loginEmails).set({ status: 'failed', error: `Could not reach the mail provider: ${message.slice(0, 200)}` }).where(eq(loginEmails.id, job.id));
+			outcome = 'failed';
+		}
+		const [row] = await db
+			.select({ fullName: users.fullName, email: users.email, error: loginEmails.error })
+			.from(loginEmails)
+			.innerJoin(users, eq(users.id, loginEmails.userId))
+			.where(eq(loginEmails.id, job.id))
+			.limit(1);
+		results.push({ fullName: row?.fullName ?? 'Someone', email: row?.email ?? '', outcome, note: row?.error ?? null });
+	}
+	return { ok: true, count: results.length, results };
+}
+
+/** Send now for people found on the roster: queues their email and sends it at once. */
+export async function sendLoginEmailsToPeopleNow(actor: SessionUser, userIds: string[]) {
+	const denied = gate(actor);
+	if (denied) return denied as { ok: false; message: string };
+	const ids = [...new Set(userIds)].slice(0, 50);
+	if (ids.length === 0) return { ok: false as const, message: 'Pick someone first' };
+	await queueLoginEmails(ids, { source: 'reissue', requestedBy: actor.id, notify: false });
+	const rows = await db
+		.select({ id: loginEmails.id })
+		.from(loginEmails)
+		.where(and(inArray(loginEmails.userId, ids), eq(loginEmails.status, 'pending')));
+	return sendLoginEmailsNow(actor, rows.map((r) => r.id));
+}
+
+/** Anyone on the roster by name, email or employee code, with their latest login email. */
+export async function searchLoginPeople(q: string) {
+	const text = q.trim();
+	if (text.length < 2) return [];
+	const like = `%${text.replace(/[%_\\]/g, (c) => '\\' + c)}%`;
+	const rows = await db.execute(sql`
+		select u.id, u.full_name as "fullName", u.email, u.must_change_password as "mustChange", u.is_active as "isActive",
+			le.status as "lastStatus", le.error as "lastError", coalesce(le.sent_at, le.attempted_at, le.created_at) as "lastAt"
+		from users u
+		left join employee_profiles p on p.user_id = u.id
+		left join lateral (select * from login_emails l where l.user_id = u.id order by l.created_at desc limit 1) le on true
+		where u.hidden = false and u.email not like '%.invalid'
+			and (u.full_name ilike ${like} or u.email ilike ${like} or p.employee_code ilike ${like})
+		order by u.full_name
+		limit 12
+	`);
+	return (rows.rows as { id: string; fullName: string; email: string; mustChange: boolean; isActive: boolean; lastStatus: string | null; lastError: string | null; lastAt: string | Date | null }[]).map((r) => ({
+		...r,
+		lastAt: r.lastAt ? new Date(r.lastAt).toISOString() : null
+	}));
+}
+
+/* ---------- correcting a login email ---------- */
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+/**
+ * Login delivery › Change email: a mistyped address from the HR sheet is
+ * corrected here, so the login details (and, with Clerk, the sign-in codes)
+ * reach the person. The email is also their username. In Clerk the new
+ * address becomes the account's verified primary and the old one is removed;
+ * an account that doesn't exist yet is created with the new address.
+ */
+export async function changeLoginEmail(actor: SessionUser, userId: string, newEmail: string): Promise<{ ok: true; message: string; clerk: string | null } | { ok: false; message: string }> {
+	const denied = gate(actor);
+	if (denied) return denied as { ok: false; message: string };
+	const email = newEmail.trim().toLowerCase();
+	if (!EMAIL.test(email) || isNoLoginEmail(email)) return { ok: false, message: 'Type a full email address, like name@championsmail.com' };
+	const [u] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+	if (!u || u.hidden) return { ok: false, message: 'That person is not on the roster' };
+	if (u.role === 'super_admin' && actor.role !== 'super_admin') return { ok: false, message: 'Only a Super Admin can change a Super Admin’s email' };
+	if (u.email === email) return { ok: true, message: 'That is already their email.', clerk: null };
+	const [taken] = await db.select({ fullName: users.fullName }).from(users).where(eq(users.email, email)).limit(1);
+	if (taken) return { ok: false, message: `${email} already belongs to ${taken.fullName}` };
+
+	const old = u.email;
+	await db.update(users).set({ email, updatedAt: new Date() }).where(eq(users.id, u.id));
+
+	// Clerk: move the account to the new address so sign-in codes go there too.
+	let clerkNote: string | null = null;
+	if (clerkConfigured()) {
+		try {
+			// The new address may already have its own Clerk account (they signed
+			// in with it before the portal knew it). If nobody in the portal is
+			// linked to that account, link this login to it.
+			const { data: existing } = await clerk().users.getUserList({ emailAddress: [email] });
+			const other = existing.find((c) => c.id !== u.clerkUserId);
+			if (other) {
+				const [holder] = await db.select({ id: users.id, fullName: users.fullName }).from(users).where(eq(users.clerkUserId, other.id)).limit(1);
+				if (holder && holder.id !== u.id) throw new Error(`that address’s Clerk account belongs to ${holder.fullName}`);
+				await db.update(users).set({ clerkUserId: other.id }).where(eq(users.id, u.id));
+				await clerk().users.updateUser(other.id, { externalId: u.id });
+			} else if (u.clerkUserId) {
+				const cu = await clerk().users.getUser(u.clerkUserId);
+				const added = await clerk().emailAddresses.createEmailAddress({ userId: u.clerkUserId, emailAddress: email, verified: true, primary: true });
+				for (const e of cu.emailAddresses) if (e.id !== added.id) await clerk().emailAddresses.deleteEmailAddress(e.id).catch(() => {});
+			} else {
+				await ensureClerkAccount(u.id);
+			}
+		} catch (err) {
+			clerkNote = `The portal is updated, but Clerk refused the change (${err instanceof Error ? err.message.slice(0, 160) : 'unknown error'}). Their sign-in may still use the old address.`;
+			console.error('[clerk] email change failed for', u.id, err);
+		}
+	}
+	await logActivity({ actorUserId: actor.id, action: 'user.email_change', targetType: 'user', targetId: u.id, details: { from: old, to: email, clerk: clerkNote ? 'failed' : 'ok' } }).catch(() => {});
+	return { ok: true, message: `${u.fullName}’s email is now ${email} (was ${old}).`, clerk: clerkNote };
+}

@@ -267,7 +267,7 @@
 			{#if remaining != null && remaining < 0}
 				<div class="ess-notice">
 					<span class="ess-notice__icon"><Info size={16} /></span>
-					<div class="ess-notice__body"><strong>More than your balance</strong>This request asks for {days(requested)} but only {days(balance!.remaining)} are available.</div>
+					<div class="ess-notice__body"><strong>More than {balance!.monthly ? 'this month’s leave' : 'your balance'}</strong>This request asks for {days(requested)} but only {days(balance!.remaining)} {balance!.monthly ? 'are left this month' : 'are available'}.</div>
 				</div>
 			{/if}
 

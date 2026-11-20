@@ -1,5 +1,6 @@
 import type { PageServerLoad } from './$types';
-import { gateAdminPage } from '$lib/server/capabilities';
+import { gateAdminPage, hasCap } from '$lib/server/capabilities';
+import { deskStats } from '$lib/server/desk-stats';
 import { loadHrAnalytics, RANGE_OPTIONS } from '$lib/server/hr-analytics';
 
 /**
@@ -10,11 +11,13 @@ import { loadHrAnalytics, RANGE_OPTIONS } from '$lib/server/hr-analytics';
  * to one department.
  */
 export const load: PageServerLoad = async ({ locals, url }) => {
-	gateAdminPage(locals, ['people.analytics']);
+	const viewer = gateAdminPage(locals, ['people.analytics']);
 	const asked = Number(url.searchParams.get('months'));
 	const months = (RANGE_OPTIONS as readonly number[]).includes(asked) ? asked : 12;
 	return {
 		analytics: await loadHrAnalytics({ months, department: url.searchParams.get('dept') }),
-		rangeOptions: [...RANGE_OPTIONS]
+		rangeOptions: [...RANGE_OPTIONS],
+		// The Ask HR desk's numbers, for the people who answer it.
+		hrDesk: hasCap(viewer, 'chat.hr_desk') ? await deskStats('hr') : null
 	};
 };

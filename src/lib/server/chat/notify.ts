@@ -145,7 +145,7 @@ export async function sendDigests(now = new Date()) {
 		const esc = (s: string) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!);
 		const html = `<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px;color:#1c2036;max-width:560px">
 <p>Hi ${esc(person.fullName.split(' ')[0])}, you have ${total} unread ${total === 1 ? 'message' : 'messages'} in Champ Chat.</p>
-${list.map((x) => `<p style="margin:12px 0 4px"><b>${x.kind === 'channel' ? '#' + esc(x.name) : x.kind === 'desk' ? 'Ask HR' : 'Direct message'}</b> · ${x.n} new</p><pre style="font-family:inherit;white-space:pre-wrap;margin:0;color:#555">${esc(x.preview.split('\n').slice(0, 3).join('\n'))}</pre>`).join('')}
+${list.map((x) => `<p style="margin:12px 0 4px"><b>${x.kind === 'channel' ? '#' + esc(x.name) : x.kind === 'desk' ? esc(x.name) : 'Direct message'}</b> · ${x.n} new</p><pre style="font-family:inherit;white-space:pre-wrap;margin:0;color:#555">${esc(x.preview.split('\n').slice(0, 3).join('\n'))}</pre>`).join('')}
 <p style="margin-top:16px"><a href="${portal}/chat" style="color:#4054c8">Open Champ Chat</a></p>
 <p style="color:#888;font-size:12px">You can turn these emails off in Champ Chat settings.</p></div>`;
 		const res = await sendEmail({

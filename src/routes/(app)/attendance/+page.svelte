@@ -148,7 +148,7 @@
 {/if}
 
 <div class="ess-split ess-fill layout">
-	<div class="fill-col main-col">
+	<div class="fill-col main-col" data-tour="attendance-calendar">
 		{#if view === 'calendar'}
 			<AttendanceCalendar
 				mode="grid"
@@ -187,7 +187,7 @@
 		{/if}
 	</div>
 
-	<aside class="fill-col side-col">
+	<aside class="fill-col side-col" data-tour="attendance-side">
 		<AttendanceCalendar
 			mode="detail"
 			bind:selectedKey

@@ -1,29 +1,59 @@
 import { describe, expect, it } from 'vitest';
-import { isChiefReference } from './chief';
+import { isTopReference, topFromPick, topLabel, topPick, topPositionReference, CHIEF_PICK, MAM_PICK } from './chief';
 import { buildOrgTree, type OrgPerson } from './org-chart';
 
-describe('isChiefReference', () => {
+describe('topPositionReference', () => {
 	it('recognises Chief however the sheet wrote it', () => {
 		for (const raw of ['Chief', 'CHIEF', ' chief ', 'Cheif', 'The Chief', 'Chief.']) {
-			expect(isChiefReference(raw)).toBe(true);
+			expect(topPositionReference(raw)).toBe('chief');
 		}
 	});
 
-	it('does not mistake people or other titles for Chief', () => {
-		for (const raw of [null, '', 'Chief Operating Officer', 'Deepak Guduru', 'Chiefly Rao', 'CEO']) {
-			expect(isChiefReference(raw)).toBe(false);
+	it('recognises Mam however the sheet wrote it', () => {
+		for (const raw of ['Mam', 'MAM', ' mam ', "Ma'am", 'Maam', 'Madam', 'The Mam']) {
+			expect(topPositionReference(raw)).toBe('mam');
+		}
+	});
+
+	it('reads the people who hold the positions as the positions', () => {
+		expect(topPositionReference('Subhakar Rao')).toBe('chief');
+		expect(topPositionReference(' SUBHAKAR RAO ')).toBe('chief');
+		expect(topPositionReference('Hema Malini')).toBe('mam');
+		expect(topPositionReference('Hemamalini')).toBe('mam');
+	});
+
+	it('does not mistake people or other titles for Chief or Mam', () => {
+		for (const raw of [null, '', 'Chief Operating Officer', 'Deepak Guduru', 'Chiefly Rao', 'CEO', 'Mamatha', 'Madam Curie', 'Hema', 'Subhakar Reddy']) {
+			expect(isTopReference(raw)).toBe(false);
 		}
 	});
 });
 
+describe('top position pickers', () => {
+	it('round-trips each position through its picker value', () => {
+		expect(topFromPick(topPick('chief'))).toBe('chief');
+		expect(topFromPick(topPick('mam'))).toBe('mam');
+		expect(topFromPick(CHIEF_PICK)).toBe('chief');
+		expect(topFromPick(MAM_PICK)).toBe('mam');
+		expect(topFromPick('some-user-id')).toBeNull();
+		expect(topFromPick('')).toBeNull();
+	});
+
+	it('labels an old row with no position as Chief', () => {
+		expect(topLabel(null)).toBe('Chief');
+		expect(topLabel('mam')).toBe('Mam');
+	});
+});
+
 describe('org chart with Chief', () => {
-	const p = (id: string, reportsTo: string | null, reportsToChief = false): OrgPerson => ({
+	const p = (id: string, reportsTo: string | null, reportsToChief = false, topPosition = 'chief'): OrgPerson => ({
 		id,
 		fullName: id,
 		role: 'employee',
 		reportsTo,
 		teamId: null,
-		reportsToChief
+		reportsToChief,
+		topPosition
 	});
 
 	it('hangs Chief reporters and their teams under Chief, and leaves the rest as roots', () => {
@@ -35,6 +65,20 @@ describe('org chart with Chief', () => {
 		]);
 		expect(chart.underChief.map((n) => n.person.id)).toEqual(['director']);
 		expect(chart.underChief[0].children[0].person.id).toBe('manager');
+		expect(chart.roots.map((n) => n.person.id)).toEqual(['unlinked']);
+		expect(chart.underMam).toEqual([]);
+	});
+
+	it('hangs Mam reporters under Mam, beside Chief', () => {
+		const chart = buildOrgTree([
+			p('director', null, true),
+			p('ops-head', null, true, 'mam'),
+			p('ops-lead', 'ops-head'),
+			p('unlinked', null)
+		]);
+		expect(chart.underChief.map((n) => n.person.id)).toEqual(['director']);
+		expect(chart.underMam.map((n) => n.person.id)).toEqual(['ops-head']);
+		expect(chart.underMam[0].children[0].person.id).toBe('ops-lead');
 		expect(chart.roots.map((n) => n.person.id)).toEqual(['unlinked']);
 	});
 });

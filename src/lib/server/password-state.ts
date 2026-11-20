@@ -11,6 +11,13 @@
  */
 export const NO_PASSWORD_YET = '!no-password-yet';
 
+/**
+ * `users.password_hash` of someone who has no login at all (src/lib/no-login.ts):
+ * blue-collar staff kept on the roster by their manager. Like NO_PASSWORD_YET
+ * it is not an Argon2 hash, so no password ever matches it.
+ */
+export const NO_LOGIN = '!no-login';
+
 export function hasPassword(passwordHash: string | null | undefined): boolean {
-	return Boolean(passwordHash) && passwordHash !== NO_PASSWORD_YET;
+	return Boolean(passwordHash) && passwordHash !== NO_PASSWORD_YET && passwordHash !== NO_LOGIN;
 }

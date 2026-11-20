@@ -18,11 +18,15 @@ export type AdminTabId =
 	| 'overview'
 	| 'analytics'
 	| 'people'
+	| 'alumni'
+	| 'engagement'
+	| 'it'
 	| 'biometric'
 	| 'balances'
 	| 'policies'
 	| 'org'
 	| 'access'
+	| 'support'
 	| 'chat'
 	| 'zoom'
 	| 'cleanup'
@@ -75,6 +79,36 @@ export const ADMIN_TABS: AdminTab[] = [
 		caps: ['people.directory', 'people.create_login', 'people.send_logins', 'people.bulk_import', 'people.reset_password', 'people.password_activity']
 	},
 	{
+		id: 'alumni',
+		href: '/admin/alumni',
+		label: 'Alumni',
+		heading: 'Everyone who has been part of the story.',
+		category: 'People',
+		blurb: 'Upload the left-employee tracker, keep every former employee on record, and close the logins of people who have left.',
+		group: 1,
+		caps: ['people.alumni']
+	},
+	{
+		id: 'engagement',
+		href: '/admin/engagement',
+		label: 'Engagement studio',
+		heading: 'Moments worth celebrating.',
+		category: 'People',
+		blurb: 'Birthday and anniversary templates the portal shows on the day, short reels on everyone’s Home page, and how people engage.',
+		group: 1,
+		caps: ['engagement.studio']
+	},
+	{
+		id: 'it',
+		href: '/admin/it',
+		label: 'IT dashboard',
+		heading: 'Every login, healthy.',
+		category: 'System',
+		blurb: 'Who has never signed in, stale temporary passwords, resets, the login-email queue, the biometric sync and the Ask IT desk.',
+		group: 1,
+		caps: ['it.dashboard']
+	},
+	{
 		id: 'biometric',
 		href: '/admin/biometric',
 		label: 'Attendance',
@@ -121,6 +155,16 @@ export const ADMIN_TABS: AdminTab[] = [
 		heading: 'The right access for every role.',
 		category: 'Access',
 		blurb: 'Named roles such as IT Support, what each one may do, and who holds them.',
+		group: 2,
+		caps: ['access.view', 'system.roles']
+	},
+	{
+		id: 'support',
+		href: '/admin/support-teams',
+		label: 'HR, IT & Engagement',
+		heading: 'The right people on every question.',
+		category: 'Access',
+		blurb: 'Who is in HR, Employee Engagement and IT: they get that team’s controls and answer its desk.',
 		group: 2,
 		caps: ['access.view', 'system.roles']
 	},

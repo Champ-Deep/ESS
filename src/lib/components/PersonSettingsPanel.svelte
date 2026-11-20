@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { CHIEF_LABEL, CHIEF_PICK } from '$lib/chief';
+	import { CHIEF_LABEL, CHIEF_PICK, MAM_LABEL, MAM_PICK, topFromPick, topLabel, topPick } from '$lib/chief';
 	import X from '@lucide/svelte/icons/x';
 	import Avatar from '$lib/components/Avatar.svelte';
 	import { lockPageScroll } from '$lib/scroll-lock';
@@ -22,8 +22,10 @@
 		hasPicture: boolean;
 		role: string;
 		reportsTo: string | null;
-		/** Reports to Chief, the head of the company, who has no login. */
+		/** Reports to a top-level position (Chief or Mam), which has no login. */
 		reportsToChief?: boolean;
+		/** Which one, when reportsToChief is set: 'chief' or 'mam'. */
+		topPosition?: string | null;
 		hrUserId: string | null;
 		shiftGroupId: string | null;
 		officeTimings: string | null;
@@ -73,9 +75,10 @@
 	// svelte-ignore state_referenced_locally
 	let role = $state(person.role);
 	// svelte-ignore state_referenced_locally
-	let reportsTo = $state(person.reportsToChief ? CHIEF_PICK : (person.reportsTo ?? ''));
+	let reportsTo = $state(person.reportsToChief ? topPick(person.topPosition) : (person.reportsTo ?? ''));
 	// svelte-ignore state_referenced_locally
-	const initialReportsTo = person.reportsToChief ? CHIEF_PICK : (person.reportsTo ?? '');
+	const initialReportsTo = person.reportsToChief ? topPick(person.topPosition) : (person.reportsTo ?? '');
+	const pickedTop = $derived(topFromPick(reportsTo));
 	// svelte-ignore state_referenced_locally
 	let hrUserId = $state(person.hrUserId ?? '');
 	// svelte-ignore state_referenced_locally
@@ -165,8 +168,9 @@
 					// server refuses both, and sending an unchanged value would be a
 					// needless no-op.
 					...(isSelf || !canEditRole ? {} : { role }),
-					reportsTo: reportsTo === CHIEF_PICK ? null : reportsTo || null,
-					reportsToChief: reportsTo === CHIEF_PICK,
+					reportsTo: pickedTop ? null : reportsTo || null,
+					reportsToChief: pickedTop !== null,
+					...(pickedTop ? { topPosition: pickedTop } : {}),
 					hrUserId: hrUserId || null,
 					shiftGroupId: shiftGroupId || null,
 					officeTimings,
@@ -261,15 +265,18 @@
 					{#if canPickChief || initialReportsTo === CHIEF_PICK}
 						<option value={CHIEF_PICK} disabled={!canPickChief}>{CHIEF_LABEL}</option>
 					{/if}
+					{#if canPickChief || initialReportsTo === MAM_PICK}
+						<option value={MAM_PICK} disabled={!canPickChief}>{MAM_LABEL}</option>
+					{/if}
 					{#each candidates as p (p.id)}
 						<option value={p.id}>{optionLabel(p)}</option>
 					{/each}
 				</select>
 				<span class="ess-help">
-					{#if reportsTo === CHIEF_PICK}
+					{#if pickedTop}
 						Leave, comp-off and attendance corrections go straight to the
 						concerned HR{hrUserId ? '' : ' (any admin while none is set)'} for a single approval.
-						An Employee reporting to Chief becomes a Team Lead.
+						An Employee reporting to {topLabel(pickedTop)} becomes a Team Lead.
 					{:else}
 						Gives the first approval on leave, comp-off and attendance corrections. An
 						Employee picked here becomes a Team Lead; a Super Admin can change that back.

@@ -1,4 +1,5 @@
 import { env } from '$env/dynamic/private';
+import { isScopeError, missingScopes } from './errors';
 import { kv } from '$lib/server/chat/bus';
 import { db } from '$lib/server/db/postgres';
 import { appSettings } from '$lib/server/db/schema';
@@ -87,14 +88,18 @@ async function call<T>(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string
 			body: body === undefined ? undefined : JSON.stringify(body)
 		});
 	let res = await send();
-	if (res.status === 401) {
-		// Token revoked or rotated early: one retry with a fresh one.
+	// A token carries the app's scopes as they were when it was issued, and it
+	// is cached for most of an hour. So a scope HR has just added in Zoom only
+	// counts once a new token is fetched: on "does not contain scopes" (4711),
+	// as on a revoked token (401), drop the cached one and try once more.
+	let text = '';
+	if (res.status === 401 || (!res.ok && isScopeError((text = await res.clone().text().catch(() => ''))))) {
 		memToken = null;
 		await kv().del('zoom:token').catch(() => {});
 		res = await send();
 	}
 	if (!res.ok) {
-		const text = (await res.text().catch(() => '')).slice(0, 300);
+		text = (await res.text().catch(() => '')).slice(0, 300);
 		let code: number | undefined;
 		try {
 			code = JSON.parse(text).code;
@@ -109,6 +114,8 @@ async function call<T>(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string
 }
 
 const get = <T>(path: string) => call<T>('GET', path);
+
+export { missingScopes };
 
 /* ---------- what ESS reads ---------- */
 

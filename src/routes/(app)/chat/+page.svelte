@@ -20,7 +20,7 @@
 	import AnnouncementFeed from '$lib/components/announcements/AnnouncementFeed.svelte';
 	import AnnouncementAdmin from '$lib/components/announcements/AnnouncementAdmin.svelte';
 	import ChampPanel from '$lib/components/champ/ChampPanel.svelte';
-	import { chat, channelLabel, type SidebarChannel } from '$lib/chat/client.svelte';
+	import { chat, channelLabel, type SidebarChannel, deskWords } from '$lib/chat/client.svelte';
 	import type { ChatMessageView } from '$lib/server/chat/messages';
 
 	let { data, form } = $props();
@@ -144,7 +144,7 @@
 		if (other && !other.isActive) return `${other.fullName} has left, so this conversation is read-only.`;
 		return null;
 	});
-	const placeholder = $derived(active ? (active.kind === 'channel' ? `Message #${active.name}` : active.kind === 'desk' ? (active.deskOwnerId === me.id ? 'Ask HR a question' : 'Reply to this question') : `Message ${channelLabel(active, me.id)}`) : 'Message');
+	const placeholder = $derived(active ? (active.kind === 'channel' ? `Message #${active.name}` : active.kind === 'desk' ? (active.deskOwnerId === me.id ? deskWords(active).placeholder : 'Reply to this question') : `Message ${channelLabel(active, me.id)}`) : 'Message');
 	const canMentionAll = $derived(!!active && active.kind === 'channel' && (data.can.mentionAll || (me.role === 'team_lead' && (active.teamId === me.teamId || (active.source === 'team' && !!me.teamId)))));
 
 	let list = $state<ReturnType<typeof MessageList> | null>(null);
@@ -170,6 +170,7 @@
 			{activeId}
 			meId={me.id}
 			isHr={data.can.hrDesk}
+			desks={data.can.desks}
 			{presence}
 			{champWaiting}
 			onselect={select}
@@ -203,7 +204,7 @@
 						{#if other}
 							{statusOf(other.id)?.label ?? ''}{statusOf(other.id)?.online ? ' · online' : ''}{active.pinnedAs ? ` · ${active.pinnedAs === 'manager' ? 'Your reporting manager' : 'Your concerned HR'}` : ''}
 						{:else if active.kind === 'desk'}
-							{active.deskOwnerId === me.id ? 'Private to you and HR · goes to your concerned HR first' : `Question from ${channelLabel(active, me.id)}`} · {active.deskStatus === 'resolved' ? 'Resolved' : 'Open'}
+							{active.deskOwnerId === me.id ? deskWords(active).privacy : `Question from ${channelLabel(active, me.id)}`} · {active.deskStatus === 'resolved' ? 'Resolved' : 'Open'}
 						{:else if active.kind === 'announcements'}
 							Notices from HR: what needs you, what is coming up, updates
 						{:else if active.kind === 'system'}
@@ -233,7 +234,7 @@
 				</div>
 			{:else}
 				{#key active.id}
-					<MessageList bind:this={list} channelId={active.id} meId={me.id} meName={me.fullName} {statusOf} onreply={openThread} emptyText={active.kind === 'system' ? 'Nothing here yet. Leave requests to approve and decisions on yours will appear here.' : active.kind === 'desk' ? 'Ask HR anything here. Only you and HR can see it.' : 'No messages yet. Say hello.'} />
+					<MessageList bind:this={list} channelId={active.id} meId={me.id} meName={me.fullName} {statusOf} onreply={openThread} emptyText={active.kind === 'system' ? 'Nothing here yet. Leave requests to approve and decisions on yours will appear here.' : active.kind === 'desk' ? deskWords(active).empty : 'No messages yet. Say hello.'} />
 					<Composer channelId={active.id} {members} {placeholder} {disabledReason} {canMentionAll} onsent={(m) => m && list?.upsert([m])} />
 				{/key}
 			{/if}
@@ -249,7 +250,7 @@
 					<ThreadPanel root={thread} meId={me.id} meName={me.fullName} {members} canPost={!disabledReason} {statusOf} onclose={() => { panel = null; thread = null; }} />
 				{/key}
 			{:else if panel === 'info' && active}
-				<InfoPanel channel={active} meId={me.id} meName={me.fullName} can={{ hrDesk: data.can.hrDesk, export: data.can.export, createChannels: data.can.createChannels }} {statusOf} onclose={() => (panel = null)} onleft={() => { panel = null; void chat.refresh().then(() => defaultId && select(defaultId)); }} />
+				<InfoPanel channel={active} meId={me.id} meName={me.fullName} can={{ hrDesk: data.can.hrDesk, desks: data.can.desks, export: data.can.export, createChannels: data.can.createChannels }} {statusOf} onclose={() => (panel = null)} onleft={() => { panel = null; void chat.refresh().then(() => defaultId && select(defaultId)); }} />
 			{:else if panel === 'search' || panel === 'saved'}
 				<FindPanel mode={panel} meId={me.id} meName={me.fullName} {nameOf} onopen={(m) => { select(m.channelId); if (m.threadRootId) void fetch(`/api/chat/messages?ids=${m.threadRootId}`).then(async (r) => { const [root] = r.ok ? await r.json() : []; if (root) openThread(root); }); }} onclose={() => (panel = null)} />
 			{/if}

@@ -9,6 +9,7 @@
 	import ArrowUpRight from '@lucide/svelte/icons/arrow-up-right';
 	import Video from '@lucide/svelte/icons/video';
 	import Avatar from '$lib/components/Avatar.svelte';
+	import HomeReel from '$lib/components/engagement/HomeReel.svelte';
 
 	type Ev = {
 		id: string;
@@ -113,10 +114,15 @@
 			</ul>
 		{/if}
 	{/if}
+
+	<!-- Today's celebrations and reels: plays over this card while new, then
+	     a small LIVE button in the header to watch again. -->
+	<HomeReel variant="card" />
 </section>
 
 <style>
 	.panel {
+		position: relative;
 		display: flex;
 		flex-direction: column;
 		gap: 10px;

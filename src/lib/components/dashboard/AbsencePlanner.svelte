@@ -297,7 +297,7 @@
 
 <svelte:window onpointerup={pickEnd} />
 
-<section class="planner ess-card" aria-labelledby="planner-h">
+<section class="planner ess-card" aria-labelledby="planner-h" data-tour="planner">
 	<header class="head">
 		<div class="title">
 			<h2 id="planner-h">Absence planner</h2>

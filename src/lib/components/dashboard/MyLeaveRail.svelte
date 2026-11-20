@@ -71,11 +71,11 @@
 	<!-- ---------- balance ---------- -->
 	<section class="blk hero" aria-labelledby="ml-bal">
 		<div class="blk-head">
-			<h3 id="ml-bal" class="eyebrow">My leave · {me.year}</h3>
+			<h3 id="ml-bal" class="eyebrow">Earned leave · {new Date(`${me.today}T00:00:00Z`).toLocaleDateString('en-IN', { month: 'short', year: 'numeric', timeZone: 'UTC' })}</h3>
 			<button type="button" class="plan-btn" onclick={planNext}><CalendarPlus size={13} /> Plan</button>
 		</div>
 		{#if me.balances.length}
-			<p class="big"><b class:neg={t.free < 0}>{fmtNum(t.free)}</b> <span>days free · of {fmtNum(t.allocated)}</span></p>
+			<p class="big"><b class:neg={t.free < 0}>{fmtNum(t.free)}</b> <span>days free · of {fmtNum(t.allocated)} this month</span></p>
 			<div class="stack" role="img" aria-label="{fmtNum(t.taken)} taken, {fmtNum(t.scheduled)} upcoming, {fmtNum(t.pending)} pending, {fmtNum(Math.max(0, t.free))} free, of {fmtNum(t.allocated)} accrued">
 				<span class="s-taken" style="width: {seg.taken}"></span>
 				<span class="s-sched" style="width: {seg.scheduled}"></span>

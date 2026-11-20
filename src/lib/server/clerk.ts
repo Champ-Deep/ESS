@@ -7,6 +7,7 @@ import { users } from './db/schema';
 import { eq } from 'drizzle-orm';
 import { hashPassword } from './auth';
 import { NO_PASSWORD_YET, hasPassword } from './password-state';
+import { isNoLoginEmail } from '../no-login';
 
 /**
  * Clerk as the portal's sign-in.
@@ -78,17 +79,31 @@ export async function userForClerkId(clerkUserId: string): Promise<UserRow | nul
 	if (cu.externalId && /^[0-9a-f-]{36}$/i.test(cu.externalId)) {
 		[row] = await db.select().from(users).where(eq(users.id, cu.externalId)).limit(1);
 	}
-	if (!row) {
-		const primary = cu.emailAddresses.find((e) => e.id === cu.primaryEmailAddressId);
-		if (primary?.verification?.status === 'verified') {
-			[row] = await db.select().from(users).where(eq(users.email, primary.emailAddress.toLowerCase())).limit(1);
-		}
+	const primary = cu.emailAddresses.find((e) => e.id === cu.primaryEmailAddressId);
+	const verifiedEmail = primary?.verification?.status === 'verified' ? primary.emailAddress.toLowerCase() : null;
+	if (!row && verifiedEmail) {
+		[row] = await db.select().from(users).where(eq(users.email, verifiedEmail)).limit(1);
 	}
-	// Never re-point a row that is already linked to a different Clerk account.
-	if (!row || (row.clerkUserId && row.clerkUserId !== clerkUserId)) return null;
+	if (!row) return null;
+	// A row already linked to a different Clerk account is only moved when the
+	// link is stale: the person's login email was corrected in the portal, this
+	// account holds that address verified, and the old account no longer has
+	// it (or is gone). Otherwise it is never re-pointed.
+	if (row.clerkUserId && row.clerkUserId !== clerkUserId) {
+		if (verifiedEmail !== row.email.toLowerCase()) return null;
+		let oldStillHasIt = false;
+		try {
+			const old = await clerk().users.getUser(row.clerkUserId);
+			oldStillHasIt = old.emailAddresses.some((e) => e.emailAddress.toLowerCase() === verifiedEmail);
+		} catch {
+			oldStillHasIt = false; // deleted in Clerk
+		}
+		if (oldStillHasIt) return null;
+		console.warn('[clerk] moving', row.id, 'from stale', row.clerkUserId, 'to', clerkUserId);
+	}
 
 	await db.update(users).set({ clerkUserId }).where(eq(users.id, row.id));
-	if (!cu.externalId) await clerk().users.updateUser(clerkUserId, { externalId: row.id });
+	if (cu.externalId !== row.id) await clerk().users.updateUser(clerkUserId, { externalId: row.id });
 	return { ...row, clerkUserId };
 }
 
@@ -111,7 +126,8 @@ export async function mirrorPasswordToClerk(
 	if (!clerkConfigured()) return;
 	try {
 		const [row] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-		if (!row) return;
+		// Someone with no login (src/lib/no-login.ts) never gets a Clerk account.
+		if (!row || isNoLoginEmail(row.email)) return;
 		// A Clerk account made in the Dashboard with this email is linked, not
 		// duplicated: Clerk refuses a second account for the same address.
 		let clerkUserId = row.clerkUserId;
@@ -156,7 +172,7 @@ export async function ensureClerkAccount(userId: string): Promise<void> {
 	if (!clerkConfigured()) return;
 	try {
 		const [row] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-		if (!row || row.clerkUserId) return;
+		if (!row || row.clerkUserId || isNoLoginEmail(row.email)) return;
 		const { data } = await clerk().users.getUserList({ emailAddress: [row.email] });
 		let clerkUserId = data[0]?.id;
 		if (clerkUserId) {

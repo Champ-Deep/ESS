@@ -1,4 +1,6 @@
 import { attendanceWindow, buildAttendanceHeatmap } from '$lib/dashboard-analytics';
+import { monthlyLeave } from '$lib/server/monthly-leave';
+import { isEarnedLeave } from '$lib/earned-leave';
 import { tenureFrom } from '$lib/tenure';
 import type { PageServerLoad } from './$types';
 import { db } from '$lib/server/db/postgres';
@@ -35,6 +37,8 @@ function dateKey(value: string | Date): string {
 	return String(value).slice(0, 10);
 }
 
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
 export const load: PageServerLoad = async ({ locals, url }) => {
 	const user = locals.user!;
 	const year = new Date().getFullYear();
@@ -47,8 +51,12 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		.from(leaveAllocations)
 		.where(and(eq(leaveAllocations.userId, user.id), eq(leaveAllocations.year, year)));
 
-	const leaveBalance = allocations.reduce((sum, a) => sum + (Number(a.allocatedDays) - Number(a.usedDays)), 0);
-	const leaveAllocated = allocations.reduce((sum, a) => sum + Number(a.allocatedDays), 0);
+	// "Leave balance" is Earned Leave, this month only: what the month credits
+	// less what is taken or booked in it (src/lib/server/monthly-leave.ts).
+	const earnedThisMonth = ((await monthlyLeave([user.id])).get(user.id) ?? []).find((f) => isEarnedLeave(f));
+	const leaveBalance = earnedThisMonth?.left ?? 0;
+	const leaveAllocated = earnedThisMonth?.credited ?? 0;
+	const leaveTakenThisMonth = round2((earnedThisMonth?.taken ?? 0) + (earnedThisMonth?.booked ?? 0));
 
 	const pendingLeaveCount = await db
 		.select({ count: sql<number>`count(*)` })
@@ -293,6 +301,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 			completeDays: monthCells.filter(c => c.complete).length
 		},
 		leaveBalance,
+		leaveTakenThisMonth,
 		leaveAllocated,
 		leaveTypeCount,
 		attendancePct,

@@ -22,6 +22,11 @@ services:
       DEVELOPER_PASSWORD: ${DEVELOPER_PASSWORD:-}
       DEVELOPER_FULL_NAME: ${DEVELOPER_FULL_NAME:-}
       # Optional integrations; empty means "not connected" and the app copes.
+      # OpenRouter powers Champ, policy and holiday-list reading, spreadsheet
+      # column mapping and meeting minutes. The model needs a real default:
+      # the code falls back only on a missing value, not an empty one.
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-google/gemini-3.5-flash}
       ZOOM_ACCOUNT_ID: ${ZOOM_ACCOUNT_ID:-}
       ZOOM_CLIENT_ID: ${ZOOM_CLIENT_ID:-}
       ZOOM_CLIENT_SECRET: ${ZOOM_CLIENT_SECRET:-}

@@ -15,6 +15,7 @@
 	import Users from '@lucide/svelte/icons/users';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 	import ChartCard from '$lib/components/analytics/ChartCard.svelte';
+	import DeskStatsCard from '$lib/components/DeskStatsCard.svelte';
 	import LineChart from '$lib/components/analytics/LineChart.svelte';
 	import ColumnChart from '$lib/components/analytics/ColumnChart.svelte';
 	import BarList from '$lib/components/analytics/BarList.svelte';
@@ -221,7 +222,7 @@
 		</ChartCard>
 
 		<!-- ---------- hires vs exits: growth up, loss down ---------- -->
-		<ChartCard title="Hires vs exits" sub="Joined above the line, left below it" note="No leaving date is recorded, so an exit counts in the month the login was deactivated.">
+		<ChartCard title="Hires vs exits" sub="Joined above the line, left below it" note="An exit counts on the person’s last working day (from Alumni or payroll), else in the month their login was closed.">
 			{#snippet chart()}
 				<div class="lead compact">
 					<div class="lead-num">
@@ -476,9 +477,15 @@
 			{/snippet}
 		</ChartCard>
 	</div>
+	{#if data.hrDesk}
+		<div class="desk-row"><DeskStatsCard title="Ask HR desk" stats={data.hrDesk} /></div>
+	{/if}
 </div>
 
 <style>
+	.desk-row {
+		grid-column: 1 / -1;
+	}
 	/* Chart colours, each stepped separately for the dark theme:
 	   - categorical slots 1–4 and a neutral for "not recorded";
 	   - a blue ramp for task stages (o1–o3);

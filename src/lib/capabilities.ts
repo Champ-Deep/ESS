@@ -37,6 +37,7 @@ export const CAPABILITIES = [
 	{ key: 'people.reset_password', label: 'Reset passwords', group: 'People', description: 'Issue a new temporary password for anyone.', grantable: true },
 	{ key: 'people.password_activity', label: 'See password activity', group: 'People', description: 'Who changed or reset whose password, and when.', grantable: true },
 	{ key: 'people.analytics', label: 'See HR analytics', group: 'People', description: 'Open HR analytics: headcount, hires and exits, diversity, age, absence, attrition, engagement, meetings and tasks across the roster.', grantable: true },
+	{ key: 'people.alumni', label: 'Alumni tracker', group: 'People', description: 'Upload the left-employee tracker, see every former employee, and close the logins of people who have left.', grantable: true },
 	{ key: 'people.employee_code', label: 'Set employee codes', group: 'People', description: 'Change the employee code that links biometric punches.', grantable: true },
 	{ key: 'people.assign_roles', label: 'Give people roles', group: 'People', description: 'Change base roles and give named roles. Super Admin only.', grantable: false },
 	{ key: 'people.delete', label: 'Delete people', group: 'People', description: 'Permanently delete a login and its records. Super Admin only.', grantable: false },
@@ -59,8 +60,11 @@ export const CAPABILITIES = [
 	{ key: 'chat.manage_rules', label: 'Set the chat rules', group: 'Communication', description: 'Decide who employees can message and who can start group chats.', grantable: true },
 	{ key: 'chat.create_channels', label: 'Create channels anywhere', group: 'Communication', description: 'Create channels for any group of people. Team Leads can always create them for their own team.', grantable: true },
 	{ key: 'chat.mention_all', label: 'Use @channel and @here', group: 'Communication', description: 'Notify a whole channel at once, in any channel.', grantable: true },
-	{ key: 'chat.hr_desk', label: 'Answer #ask-hr', group: 'Communication', description: 'See and answer questions people raise with HR.', grantable: true },
+	{ key: 'chat.hr_desk', label: 'Answer Ask HR', group: 'Communication', description: 'See and answer questions people raise with HR, and mark them resolved.', grantable: true },
+	{ key: 'chat.it_desk', label: 'Answer Ask IT', group: 'Communication', description: 'See and answer questions people raise with IT, and mark them resolved.', grantable: true },
+	{ key: 'chat.engagement_desk', label: 'Answer Ask Engagement', group: 'Communication', description: 'See and answer questions people raise with Employee Engagement, and mark them resolved.', grantable: true },
 	{ key: 'chat.moderate', label: 'Moderate chat', group: 'Communication', description: 'Review reported messages and hide them for everyone.', grantable: true },
+	{ key: 'engagement.studio', label: 'Engagement studio', group: 'Communication', description: 'Set the birthday and anniversary templates and videos the portal shows on the day, and publish short reels on everyone’s Home page.', grantable: true },
 	{ key: 'chat.export', label: 'Export a conversation', group: 'Communication', description: 'Export one conversation for a formal complaint. Recorded. Super Admin only.', grantable: false },
 	// --- Tasks & meetings
 	{ key: 'tasks.view_all', label: "See every team's tasks", group: 'Tasks & meetings', description: 'Open any team board in Champ Hub, not just their own reports.', grantable: true },
@@ -70,6 +74,7 @@ export const CAPABILITIES = [
 	{ key: 'champ.reports', label: 'Roster reports in Champ', group: 'Champ', description: 'Counts, lists and reports across the whole roster.', grantable: true },
 	{ key: 'champ.audit', label: 'Audit trail in Champ', group: 'Champ', description: 'Search who changed what, and when.', grantable: true },
 	// --- System
+	{ key: 'it.dashboard', label: 'IT dashboard', group: 'System', description: 'See login health: who has never signed in, stale temporary passwords, resets, the login-email queue, the Ask IT desk and the biometric sync.', grantable: true },
 	{ key: 'system.cleanup', label: 'Data cleanup', group: 'System', description: 'Delete seeded and test data. Super Admin only.', grantable: false },
 	{ key: 'system.design_tweaks', label: 'Design tweaks', group: 'System', description: 'Preview design variants in your browser. Super Admin only.', grantable: false },
 	{ key: 'system.roles', label: 'Manage roles', group: 'System', description: 'Create, change and delete named roles. Super Admin only.', grantable: false }
@@ -98,6 +103,7 @@ const DEFAULTS: Record<Role, CapabilityKey[]> = {
 		'people.reset_password',
 		'people.employee_code',
 		'people.analytics',
+		'people.alumni',
 		'attendance.biometric_upload',
 		'leave.set_balances',
 		'org.view',
@@ -146,6 +152,7 @@ export const ADMIN_AREA_KEYS: CapabilityKey[] = [
 	'people.reset_password',
 	'people.password_activity',
 	'people.analytics',
+	'people.alumni',
 	'attendance.biometric_upload',
 	'attendance.device_sync',
 	'leave.set_balances',
@@ -156,11 +163,113 @@ export const ADMIN_AREA_KEYS: CapabilityKey[] = [
 	'system.zoom',
 	'system.cleanup',
 	'system.design_tweaks',
-	'system.roles'
+	'system.roles',
+	'engagement.studio',
+	'it.dashboard'
 ];
 
 export function canOpenAdmin(caps: readonly string[]): boolean {
 	return ADMIN_AREA_KEYS.some((k) => caps.includes(k));
+}
+
+/**
+ * The three support teams — HR, Employee Engagement and IT. A Super Admin puts
+ * any number of people in each (Admin Controls › Roles & access); membership
+ * adds the team's privileges on top of the person's base and named role, and
+ * makes them a responder on that team's desk ("Ask HR", "Ask IT", "Ask
+ * Engagement"), where everyone else raises questions for it.
+ *
+ * The bundles are fixed here so every member of a team can do the same; give
+ * one person more with a named role.
+ */
+export type SupportTeamKey = 'hr' | 'engagement' | 'it';
+
+export type SupportTeam = {
+	key: SupportTeamKey;
+	name: string;
+	/** What the desk is called for the person asking. */
+	deskName: string;
+	/** The privilege that lets someone answer and resolve this desk. */
+	deskCap: CapabilityKey;
+	description: string;
+	/** What a member asks this desk about, shown to the person picking a desk. */
+	askAbout: string;
+	capabilities: CapabilityKey[];
+};
+
+/**
+ * Admin Controls › People is not part of any team's work: these stay with
+ * HR Admins and Super Admins (and any named role given them), never a team.
+ */
+export const PEOPLE_TAB_KEYS: CapabilityKey[] = [
+	'people.directory',
+	'people.create_login',
+	'people.send_logins',
+	'people.bulk_import',
+	'people.reset_password',
+	'people.password_activity'
+];
+const withoutPeople = (keys: CapabilityKey[]) => keys.filter((k) => !PEOPLE_TAB_KEYS.includes(k));
+
+export const SUPPORT_TEAMS: SupportTeam[] = [
+	{
+		key: 'hr',
+		name: 'HR',
+		deskName: 'Ask HR',
+		deskCap: 'chat.hr_desk',
+		description: 'Runs people, leave, attendance and policies, and answers Ask HR.',
+		askAbout: 'Leave, attendance, payslips, policies, documents',
+		// Not the Policies, Org chart, Roles & access or HR, IT & Engagement tabs:
+		// those stay with Super Admins.
+		capabilities: withoutPeople([...DEFAULTS.admin.filter((k) => !['chat.hr_desk', 'org.view', 'access.view'].includes(k)), 'chat.hr_desk', 'leave.week_off_rosters'])
+	},
+	{
+		key: 'engagement',
+		name: 'Employee Engagement',
+		deskName: 'Ask Engagement',
+		deskCap: 'chat.engagement_desk',
+		description: 'Runs events, announcements and channels, follows engagement in HR analytics, and answers Ask Engagement.',
+		askAbout: 'Events, celebrations, clubs, suggestions, feedback',
+		capabilities: [
+			'people.analytics',
+			'org.view',
+			'announcements.post',
+			'chat.dm_anyone',
+			'chat.create_groups',
+			'chat.create_channels',
+			'chat.mention_all',
+			'chat.engagement_desk',
+			'engagement.studio'
+		]
+	},
+	{
+		key: 'it',
+		name: 'IT',
+		deskName: 'Ask IT',
+		deskCap: 'chat.it_desk',
+		description: 'Watches login health and the biometric devices, and answers Ask IT.',
+		askAbout: 'Logins, passwords, laptops, email, access, the biometric device',
+		capabilities: [
+			'people.employee_code',
+			'attendance.biometric_upload',
+			'attendance.device_sync',
+			'chat.dm_anyone',
+			'chat.create_groups',
+			'chat.it_desk',
+			'it.dashboard'
+		]
+	}
+];
+
+export const SUPPORT_TEAM_KEYS = SUPPORT_TEAMS.map((t) => t.key);
+
+export function supportTeam(key: string | null | undefined): SupportTeam {
+	return SUPPORT_TEAMS.find((t) => t.key === key) ?? SUPPORT_TEAMS[0];
+}
+
+/** Every privilege a set of team memberships brings. */
+export function supportTeamCapabilities(keys: readonly string[]): CapabilityKey[] {
+	return [...new Set(SUPPORT_TEAMS.filter((t) => keys.includes(t.key)).flatMap((t) => t.capabilities))];
 }
 
 /** Ready-made starting points for the roles people ask for most. */

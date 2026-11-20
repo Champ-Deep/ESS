@@ -91,6 +91,7 @@
 <nav
 	class="rail"
 	class:shown
+	data-tour="dock"
 	aria-label="Main"
 	onpointerenter={reveal}
 	onpointerleave={() => hideSoon()}
@@ -334,6 +335,11 @@
 			display: none;
 		}
 		:global([data-ess-dock='fixed']) .rail {
+			transform: translateY(-50%);
+			opacity: 1;
+		}
+		/* The guided tour brings it out to point at it. */
+		:global([data-ess-tour-dock]) .rail {
 			transform: translateY(-50%);
 			opacity: 1;
 		}

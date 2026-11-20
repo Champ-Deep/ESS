@@ -91,8 +91,13 @@ export const POST: RequestHandler = async (event) => {
 			);
 		}
 
-		if (approver.role === 'team_lead') {
-			const [team] = await db.select().from(teams).where(eq(teams.id, approver.teamId ?? '')).limit(1);
+		// A Team Lead's limit only guards an approval that would be final. Their
+		// first sign-off still goes on to HR, and a rejection is always theirs
+		// to make; before, both were refused for anything over two days.
+		if (approver.role === 'team_lead' && decision === 'approve' && (stage === 'hr' || singleStage)) {
+			const [team] = approver.teamId
+				? await db.select().from(teams).where(eq(teams.id, approver.teamId)).limit(1)
+				: [];
 			const threshold = team?.maxLeaveDaysAutoApprove ?? 2;
 			if (Number(application.days) > threshold) {
 				throw error(

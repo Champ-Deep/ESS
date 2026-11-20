@@ -15,7 +15,7 @@ import {
 	teams,
 	users
 } from '$lib/server/db/schema';
-import { and, desc, eq, gte, ilike, inArray, isNotNull, isNull, lte, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, ilike, inArray, isNotNull, isNull, lte, ne, or, sql } from 'drizzle-orm';
 import type { SessionUser, Role } from '$lib/server/auth';
 import { hasCap } from '$lib/server/capabilities';
 import { ensureLeaveAllocations } from '$lib/server/leave-accrual';
@@ -24,7 +24,7 @@ import { loadFeed } from '$lib/server/announcements';
 import { getMongo } from '$lib/server/db/mongo';
 import { workStatuses } from '$lib/server/chat/presence';
 import { CAPABILITIES, BASE_ROLE_LABEL, GRANTABLE_KEYS, effectiveCapabilities } from '$lib/capabilities';
-import { CHIEF_PICK } from '$lib/chief';
+import { CHIEF_PICK, MAM_PICK, topLabel, topPositionReference } from '$lib/chief';
 import { summaryOf } from '$lib/announcements';
 import { istDateKey, parseDay } from '$lib/chat/rules';
 import type { ChampCard, ChampReport } from '$lib/champ';
@@ -80,6 +80,7 @@ async function profileOf(userId: string) {
 			shiftGroupId: employeeProfiles.shiftGroupId,
 			hrUserId: employeeProfiles.hrUserId,
 			reportsToChief: employeeProfiles.reportsToChief,
+			topPosition: employeeProfiles.topPosition,
 			officeTimings: employeeProfiles.officeTimings
 		})
 		.from(users)
@@ -232,7 +233,7 @@ const leavePolicy: Tool = {
 
 const myPeople: Tool = {
 	name: 'my_people',
-	description: "Who the asker reports to (a person, or Chief), their concerned HR, and their team.",
+	description: "Who the asker reports to (a person, or Chief or Mam), their concerned HR, and their team.",
 	parameters: obj({}),
 	allowed: () => true,
 	public: true,
@@ -245,7 +246,7 @@ const myPeople: Tool = {
 		const [team] = p.teamId ? await db.select({ name: teams.name }).from(teams).where(eq(teams.id, p.teamId)).limit(1) : [];
 		return {
 			data: {
-				reports_to: p.reportsTo ? byId.get(p.reportsTo) : p.reportsToChief ? 'Chief (your requests go straight to your concerned HR)' : 'not set',
+				reports_to: p.reportsTo ? byId.get(p.reportsTo) : p.reportsToChief ? `${topLabel(p.topPosition)} (your requests go straight to your concerned HR)` : 'not set',
 				concerned_hr: p.hrUserId ? byId.get(p.hrUserId) : 'not set, so any HR admin picks up your requests',
 				team: team?.name ?? 'none'
 			}
@@ -521,7 +522,7 @@ const draftTask: Tool = {
 const peopleSearch: Tool = {
 	name: 'people_search',
 	description:
-		'Counts and lists across the roster. filter: no_manager, no_hr, no_shift, temp_password (never signed in), reports_to_chief, joined_since (value: YYYY-MM-DD), team (value: name), role (value: employee|team_lead|admin|super_admin), named_role (value: role name).',
+		'Counts and lists across the roster. filter: no_manager, no_hr, no_shift, temp_password (never signed in), reports_to_chief, reports_to_mam, joined_since (value: YYYY-MM-DD), team (value: name), role (value: employee|team_lead|admin|super_admin), named_role (value: role name).',
 	parameters: obj({ filter: S('One of the filters above'), value: S('For joined_since, team, role or named_role') }, ['filter']),
 	allowed: (c) => c.mode === 'panel' && isHrLike(c),
 	run: async (a) => {
@@ -538,7 +539,8 @@ const peopleSearch: Tool = {
 		else if (f === 'no_hr') where = and(active, isNull(employeeProfiles.hrUserId));
 		else if (f === 'no_shift') where = and(active, isNull(employeeProfiles.shiftGroupId));
 		else if (f === 'temp_password') where = and(active, eq(users.mustChangePassword, true), isNotNull(users.temporaryPassword));
-		else if (f === 'reports_to_chief') where = and(active, eq(employeeProfiles.reportsToChief, true), isNull(users.reportsTo));
+		else if (f === 'reports_to_chief') where = and(active, eq(employeeProfiles.reportsToChief, true), isNull(users.reportsTo), ne(employeeProfiles.topPosition, 'mam'));
+		else if (f === 'reports_to_mam') where = and(active, eq(employeeProfiles.reportsToChief, true), isNull(users.reportsTo), eq(employeeProfiles.topPosition, 'mam'));
 		else if (f === 'joined_since' && /^\d{4}-\d{2}-\d{2}$/.test(v)) where = and(active, gte(employeeProfiles.dateOfJoining, v));
 		else if (f === 'team') where = and(active, ilike(teams.name, `%${v.replace(/[%_]/g, '')}%`));
 		else if (f === 'role' && ['employee', 'team_lead', 'admin', 'super_admin'].includes(v)) where = and(active, eq(users.role, v as Role));
@@ -565,7 +567,7 @@ const REPORT_FIELDS: Record<string, { label: string; sql: ReturnType<typeof sql>
 	team: { label: 'Team', sql: sql`t.name` },
 	designation: { label: 'Designation', sql: sql`p.designation` },
 	role: { label: 'Role', sql: sql`coalesce(cr.name, u.role::text)` },
-	reports_to: { label: 'Reports to', sql: sql`case when p.reports_to_chief and u.reports_to is null then 'Chief' else m.full_name end` },
+	reports_to: { label: 'Reports to', sql: sql`case when p.reports_to_chief and u.reports_to is null then (case when p.top_position = 'mam' then 'Mam' else 'Chief' end) else m.full_name end` },
 	concerned_hr: { label: 'Concerned HR', sql: sql`hr.full_name` },
 	shift_group: { label: 'Shift group', sql: sql`sg.name` },
 	office_timings: { label: 'Office timings', sql: sql`p.office_timings` },
@@ -661,7 +663,7 @@ const searchAudit: Tool = {
 			details?: Record<string, unknown>;
 			createdAt: Date;
 		}[];
-		const ids = [...new Set(entries.flatMap((e) => [e.actorUserId, e.targetId].filter(Boolean) as string[]))];
+		const ids = [...new Set(entries.flatMap((e) => [e.actorUserId, e.targetId].filter((id): id is string => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id ?? ''))))];
 		const names = ids.length ? new Map((await db.select({ id: users.id, n: users.fullName }).from(users).where(inArray(users.id, ids))).map((r) => [r.id, r.n])) : new Map();
 		return {
 			data: entries.map((e) => ({
@@ -681,11 +683,11 @@ const searchAudit: Tool = {
 const draftSettings: Tool = {
 	name: 'draft_settings_change',
 	description:
-		"Draft a change to someone's reporting line, concerned HR or shift group. reports_to may be a person or \"Chief\". Returns a card with Apply.",
+		"Draft a change to someone's reporting line, concerned HR or shift group. reports_to may be a person, \"Chief\" or \"Mam\". Returns a card with Apply.",
 	parameters: obj(
 		{
 			person: S('Name or email'),
-			reports_to: S('Name/email, or "Chief", or "none"'),
+			reports_to: S('Name/email, or "Chief", or "Mam", or "none"'),
 			concerned_hr: S('Name/email, or "none"'),
 			shift_group: S('Shift group name')
 		},
@@ -699,10 +701,12 @@ const draftSettings: Tool = {
 		const lines: string[] = [];
 		const rt = str(a.reports_to);
 		if (rt) {
-			if (/^chief$/i.test(rt)) {
+			const top = topPositionReference(rt);
+			if (top) {
 				body.reportsTo = null;
 				body.reportsToChief = true;
-				lines.push('Reports to → Chief (requests go straight to concerned HR)');
+				body.topPosition = top;
+				lines.push(`Reports to → ${topLabel(top)} (requests go straight to concerned HR)`);
 			} else if (/^none$/i.test(rt)) {
 				body.reportsTo = null;
 				body.reportsToChief = false;
@@ -855,7 +859,7 @@ const draftCreateLogin: Tool = {
 			email: S('Official email'),
 			access: S('employee, team_lead, admin, super_admin, or a named role such as IT Support'),
 			team: S('Team name, optional'),
-			reports_to: S('Name/email, or "Chief", optional'),
+			reports_to: S('Name/email, or "Chief" or "Mam", optional'),
 			concerned_hr: S('Name/email, optional'),
 			shift_group: S('Shift group name')
 		},
@@ -884,9 +888,10 @@ const draftCreateLogin: Tool = {
 		}
 		let reportsTo: string | null = null;
 		if (str(a.reports_to)) {
-			if (/^chief$/i.test(str(a.reports_to))) {
-				reportsTo = CHIEF_PICK;
-				lines.push('Reports to: Chief');
+			const top = topPositionReference(str(a.reports_to));
+			if (top) {
+				reportsTo = top === 'mam' ? MAM_PICK : CHIEF_PICK;
+				lines.push(`Reports to: ${topLabel(top)}`);
 			} else {
 				const m = await findPerson(str(a.reports_to));
 				if (!m.person) return ambiguous('manager', m.matches);

@@ -119,7 +119,7 @@
 			</div>
 		</section>
 
-		<section class="ess-card ess-fill-card grow-card" aria-labelledby="attention-title" id="attention">
+		<section class="ess-card ess-fill-card grow-card" aria-labelledby="attention-title" id="attention" data-tour="admin-attention">
 			<div class="ess-card-head">
 				<h2 class="ess-h2" id="attention-title">Needs attention</h2>
 				{#if hiddenCount > 0}

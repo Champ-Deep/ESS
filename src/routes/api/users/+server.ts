@@ -27,7 +27,8 @@ export const POST: RequestHandler = async (event) => {
 	const resolvedTeamId = actor.role === 'team_lead' ? actor.teamId : (teamId ?? null);
 
 	if (actor.role === 'team_lead') {
-		const [team] = await db.select().from(teams).where(eq(teams.id, actor.teamId ?? '')).limit(1);
+		// No team: nothing to look up (an empty id is not a uuid and errored).
+		const [team] = actor.teamId ? await db.select().from(teams).where(eq(teams.id, actor.teamId)).limit(1) : [];
 		if (!team?.canCreateEmployeeLogins) {
 			throw error(403, 'This Team Lead does not have permission to create employee logins');
 		}
@@ -74,7 +75,9 @@ export const GET: RequestHandler = async (event) => {
 	const rows =
 		actor.role === 'super_admin' || actor.role === 'admin'
 			? await db.select().from(users).where(notHidden)
-			: await db.select().from(users).where(and(eq(users.teamId, actor.teamId ?? ''), notHidden));
+			: actor.teamId
+				? await db.select().from(users).where(and(eq(users.teamId, actor.teamId), notHidden))
+				: [];
 
 	return json({
 		users: rows.map((u) => ({

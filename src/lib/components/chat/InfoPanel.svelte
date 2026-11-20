@@ -19,7 +19,8 @@
 		channel: SidebarChannel;
 		meId: string;
 		meName: string;
-		can: { hrDesk: boolean; export: boolean; createChannels: string };
+		/** desks: the desks this person answers ('hr' | 'engagement' | 'it'). */
+		can: { hrDesk: boolean; desks?: string[]; export: boolean; createChannels: string };
 		statusOf: (id: string) => { label: string; state: string; online: boolean } | null;
 		onclose: () => void;
 		onleft: () => void;
@@ -163,7 +164,7 @@
 					<input type="checkbox" checked={channel.muted} onchange={(e) => post(`channels/${channel.id}/mute`, { muted: (e.currentTarget as HTMLInputElement).checked })} />
 					Mute this conversation (no badge, no alerts)
 				</label>
-				{#if channel.kind === 'desk' && can.hrDesk}
+				{#if channel.kind === 'desk' && channel.deskOwnerId !== meId && (can.desks ?? (can.hrDesk ? ['hr'] : [])).includes(channel.deskTeam ?? 'hr')}
 					<button type="button" class="ess-btn ess-btn--secondary ess-btn--sm" onclick={() => post(`channels/${channel.id}/desk`, { status: channel.deskStatus === 'resolved' ? 'open' : 'resolved' })}>
 						{channel.deskStatus === 'resolved' ? 'Reopen this question' : 'Mark resolved'}
 					</button>

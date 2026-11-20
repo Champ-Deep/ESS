@@ -1,4 +1,5 @@
 import { error, json, type RequestEvent } from '@sveltejs/kit';
+import { deskTeamOf } from '$lib/support-desk';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db/postgres';
 import { chatChannels, chatMessages, chatPrefs, pushSubscriptions, users } from '$lib/server/db/schema';
@@ -226,7 +227,8 @@ export const POST: RequestHandler = async (event) => {
 	if (a === 'dm') return send(await openDm(user, id(String(data.userId))));
 	if (a === 'groups') return send(await createGroup(user, Array.isArray(data.memberIds) ? data.memberIds.map(String) : [], String(data.name ?? '')));
 	if (a === 'desk') {
-		const d = await ensureDesk(user.id);
+		// Ask HR by default; { team: 'it' | 'engagement' } for the other desks.
+		const d = await ensureDesk(user.id, deskTeamOf(typeof data.team === 'string' ? data.team : null));
 		return json({ ok: true, id: d.id });
 	}
 	if (a === 'channels' && !b) {

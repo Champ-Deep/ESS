@@ -26,6 +26,9 @@ RUN chmod +x ./start.sh
 
 EXPOSE 3000
 ENV PORT=3000
+# Uploads the portal takes: chat files up to 10 MB, Engagement reels up to
+# 20 MB, HR spreadsheets. adapter-node refuses any body over 512 KB otherwise.
+ENV BODY_SIZE_LIMIT=26M
 ENV HOST=0.0.0.0
 
 CMD ["./start.sh"]

@@ -175,7 +175,7 @@
 			{:else}
 				<span class="title-ph">Task</span>
 			{/if}
-			{#if task && (task.createdBy.id === meId || can)}
+			{#if task?.can.delete}
 				<button type="button" class="ess-icon-btn" aria-label="Delete task" title="Delete" onclick={() => (confirmDelete = !confirmDelete)}><Trash2 size={16} /></button>
 			{/if}
 			<button type="button" class="ess-icon-btn" bind:this={closeBtn} onclick={onclose} aria-label="Close task"><X size={18} /></button>

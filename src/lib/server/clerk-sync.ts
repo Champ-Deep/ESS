@@ -3,6 +3,7 @@ import { db } from './db/postgres';
 import { users } from './db/schema';
 import { clerk, clerkConfigured, splitName } from './clerk';
 import { hasPassword } from './password-state';
+import { isNoLoginEmail } from '../no-login';
 
 /**
  * Gives every active portal login a Clerk account with the SAME password and
@@ -24,6 +25,8 @@ export interface ClerkSyncResult {
 	alreadyLinked: number;
 	skippedInactive: number;
 	skippedNotEmail: number;
+	/** People with no login at all (src/lib/no-login.ts), who never get a Clerk account. */
+	skippedNoLogin: number;
 	failed: number;
 	problems: string[];
 	unmappedActive: number;
@@ -47,6 +50,7 @@ export async function syncClerkAccounts(
 		alreadyLinked: 0,
 		skippedInactive: 0,
 		skippedNotEmail: 0,
+		skippedNoLogin: 0,
 		failed: 0,
 		problems: [],
 		unmappedActive: 0
@@ -55,6 +59,10 @@ export async function syncClerkAccounts(
 	for (const u of await db.select().from(users)) {
 		if (!u.isActive) {
 			r.skippedInactive++;
+			continue;
+		}
+		if (isNoLoginEmail(u.email)) {
+			r.skippedNoLogin++;
 			continue;
 		}
 		if (!looksLikeEmail(u.email)) {
@@ -110,8 +118,8 @@ export async function syncClerkAccounts(
 		}
 	}
 
-	const rows = await db.select({ isActive: users.isActive, clerkUserId: users.clerkUserId }).from(users);
-	r.unmappedActive = rows.filter((row) => row.isActive && !row.clerkUserId).length;
+	const rows = await db.select({ isActive: users.isActive, clerkUserId: users.clerkUserId, email: users.email }).from(users);
+	r.unmappedActive = rows.filter((row) => row.isActive && !row.clerkUserId && !isNoLoginEmail(row.email)).length;
 	return r;
 }
 

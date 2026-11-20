@@ -225,6 +225,69 @@
       "when": 1792605938457,
       "tag": "0031_hidden_users",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1792768421974,
+      "tag": "0032_top_position_mam",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1793027456678,
+      "tag": "0033_chief_mam_by_name",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1793032380822,
+      "tag": "0034_bulk_import_blue_collar",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1794582748714,
+      "tag": "0035_shift_group_backfill",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1794583037315,
+      "tag": "0036_bulk_import_existing_manager",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1794826548261,
+      "tag": "0037_support_teams",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1794826782893,
+      "tag": "0038_alumni",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1794828186738,
+      "tag": "0039_engagement",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1794829581805,
+      "tag": "0040_engagement_templates",
+      "breakpoints": true
     }
   ]
 }

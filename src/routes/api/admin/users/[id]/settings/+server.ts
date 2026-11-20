@@ -12,6 +12,7 @@ import { syncMembershipFor } from '$lib/server/chat/sync';
 import { invalidateOrgScope, userCanReach } from '$lib/server/org-scope';
 import { invalidateOrg } from '$lib/server/tasks/service';
 import { hiddenFrom, notHidden } from '$lib/server/hidden-users';
+import { asTopPosition } from '$lib/chief';
 
 const ROLES: Role[] = ['super_admin', 'admin', 'team_lead', 'employee'];
 
@@ -195,19 +196,20 @@ export const PUT: RequestHandler = async (event) => {
 		changes.reportsTo = { from: target.reportsTo, to: managerId };
 	}
 
-	// --- Reports to Chief -----------------------------------------------------
-	// Chief is the head of the company and has no login, so reporting to Chief
-	// is a flag on the profile, not a users.reportsTo link. The two are
-	// exclusive: choosing Chief clears the manager, and choosing a manager
-	// clears Chief. Admins only — it moves the person's approvals to HR, which
-	// is not a Team Lead's call.
+	// --- Reports to Chief or Mam ----------------------------------------------
+	// Chief and Mam are the heads of the company and have no login, so
+	// reporting to either is a flag on the profile (reportsToChief, with
+	// topPosition naming which), not a users.reportsTo link. The two are
+	// exclusive: choosing Chief or Mam clears the manager, and choosing a
+	// manager clears them. Admins only — it moves the person's approvals to HR,
+	// which is not a Team Lead's call.
 	let chiefTo: boolean | undefined;
 	if (body.reportsToChief && body.reportsTo) {
-		throw error(400, 'Pick either a reporting manager or Chief, not both');
+		throw error(400, 'Pick either a reporting manager or Chief/Mam, not both');
 	}
 	if (has('reportsToChief') && Boolean(body.reportsToChief) !== profile.reportsToChief) {
 		if (actor.role === 'team_lead') {
-			throw error(403, 'Only an admin can set someone to report to Chief');
+			throw error(403, 'Only an admin can set someone to report to Chief or Mam');
 		}
 		chiefTo = Boolean(body.reportsToChief);
 	}
@@ -219,6 +221,17 @@ export const PUT: RequestHandler = async (event) => {
 	const managerAfter = changes.reportsTo ? (changes.reportsTo as { to: string | null }).to : target.reportsTo;
 	if (managerAfter && profile.reportsToChief) chiefTo = false;
 	if (chiefTo !== undefined) changes.reportsToChief = { from: profile.reportsToChief, to: chiefTo };
+	// Which of the two: only meaningful while they report to one, and moving
+	// between Chief and Mam is the same admin-only call.
+	if (has('topPosition') && (chiefTo ?? profile.reportsToChief)) {
+		const topTo = asTopPosition(body.topPosition);
+		if (topTo !== asTopPosition(profile.topPosition)) {
+			if (actor.role === 'team_lead') {
+				throw error(403, 'Only an admin can set someone to report to Chief or Mam');
+			}
+			changes.topPosition = { from: profile.topPosition, to: topTo };
+		}
+	}
 
 	// --- Assigned HR ----------------------------------------------------------
 	if (has('hrUserId') && body.hrUserId !== profile.hrUserId) {
@@ -305,7 +318,7 @@ export const PUT: RequestHandler = async (event) => {
 	}
 
 	const profilePatch: Record<string, unknown> = {};
-	for (const key of ['hrUserId', 'shiftGroupId', 'officeTimings', 'shiftType', 'reportsToChief'] as const) {
+	for (const key of ['hrUserId', 'shiftGroupId', 'officeTimings', 'shiftType', 'reportsToChief', 'topPosition'] as const) {
 		if (changes[key]) profilePatch[key] = (changes[key] as { to: unknown }).to;
 	}
 	if (Object.keys(profilePatch).length > 0) {

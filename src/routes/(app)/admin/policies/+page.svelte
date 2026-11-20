@@ -302,7 +302,7 @@
 
 <!-- Title and description come from the Admin Controls layout (src/lib/admin-tabs.ts). -->
 
-<nav class="ess-tabs ess-tabs--line kinds" aria-label="What to publish">
+<nav class="ess-tabs ess-tabs--line kinds" aria-label="What to publish" data-tour="policy-kinds">
 	<button type="button" class="ess-tab" aria-selected={kind === 'holiday_calendar'} onclick={() => switchKind('holiday_calendar')}>
 		<CalendarDays size={16} strokeWidth={1.75} /> Holiday calendars
 	</button>

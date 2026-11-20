@@ -1,6 +1,6 @@
 import { redirect } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
-import { hasCap } from '$lib/server/capabilities';
+import { hasCap, answerableDesks } from '$lib/server/capabilities';
 import { sidebarFor } from '$lib/server/chat/channels';
 import { channelCreationScope } from '$lib/server/chat/access';
 
@@ -10,6 +10,6 @@ export const load: PageServerLoad = async ({ locals }) => {
 	if (!user) throw redirect(303, '/login');
 	return {
 		sidebar: await sidebarFor(user),
-		can: { createChannels: channelCreationScope(user), hrDesk: hasCap(user, 'chat.hr_desk') }
+		can: { createChannels: channelCreationScope(user), hrDesk: hasCap(user, 'chat.hr_desk'), desks: answerableDesks(user) }
 	};
 };

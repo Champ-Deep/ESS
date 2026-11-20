@@ -69,6 +69,8 @@ export const load: LayoutServerLoad = async ({ locals }) => {
 
 	return {
 		user: locals.user,
+		// Set while someone has this blue-collar worker's portal open.
+		actingFor: locals.actingFor ?? null,
 		hasProfilePicture: Boolean(picture),
 		profilePictureVersion: picture?.updatedAt?.getTime() ?? null,
 		adminIssueCount,

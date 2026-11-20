@@ -3,9 +3,9 @@
  * department, then hands them to the pure functions in $lib/hr-analytics,
  * which hold every definition the page states.
  *
- * Exits: the portal records no leaving date, so a deactivated login counts as
- * an exit in the month it was last updated — the page says so beside the
- * figures.
+ * Exits: a deactivated login counts as an exit on its last working day
+ * (filled from the alumni tracker or set in payroll), else in the month the
+ * login was last updated — the page says so beside the figures.
  */
 import { db } from '$lib/server/db/postgres';
 import {
@@ -80,6 +80,7 @@ export async function loadHrAnalytics(opts: { months: number; department: string
 			dobActual: employeeProfiles.dobActual,
 			dobDocuments: employeeProfiles.dobDocuments,
 			dateOfJoining: employeeProfiles.dateOfJoining,
+			lastWorkingDay: employeeProfiles.lastWorkingDay,
 			shiftGroupId: employeeProfiles.shiftGroupId,
 			shiftName: shiftGroups.name
 		})
@@ -94,7 +95,7 @@ export async function loadHrAnalytics(opts: { months: number; department: string
 		...r,
 		department: r.departmentName ?? r.subDepartment?.trim() ?? UNASSIGNED,
 		hired: r.dateOfJoining ? dateKey(r.dateOfJoining) : dateKey(r.createdAt),
-		exited: r.isActive ? null : dateKey(r.updatedAt),
+		exited: r.isActive ? null : r.lastWorkingDay ? dateKey(r.lastWorkingDay) : dateKey(r.updatedAt),
 		dob: r.dobActual ? dateKey(r.dobActual) : r.dobDocuments ? dateKey(r.dobDocuments) : null
 	}));
 	const departmentNames = [...new Set(everyone.map((p) => p.department))].sort((a, b) =>
